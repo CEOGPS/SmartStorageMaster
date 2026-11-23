@@ -7,7 +7,7 @@ from pathlib import Path
 import logging
 
 from ...db import get_db
-from ...services.scan_service import ScanService
+from ...services.scan_service import ScanService, normalize_scan_path
 from ...api.schemas import (
     ScanStartRequest,
     ScanStatusResponse,
@@ -39,7 +39,7 @@ def start_scan(
         Scan session ID
     """
     try:
-        path = Path(request.path).expanduser()
+        path = normalize_scan_path(Path(request.path).expanduser())
         if not path.exists():
             raise HTTPException(status_code=400, detail=f"Path does not exist: {path}")
 

@@ -4,7 +4,9 @@ Scan service - orchestrates file scanning and database persistence
 from pathlib import Path
 from typing import Optional, Dict
 import logging
+import itertools
 import os
+import re
 import threading
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -22,6 +24,23 @@ logger = logging.getLogger(__name__)
 # Read by the status endpoint and the /ws/scan WebSocket while a scan runs.
 _progress: Dict[str, dict] = {}
 _progress_lock = threading.Lock()
+
+
+LOOKUP_CHUNK = 500
+_BARE_DRIVE = re.compile(r'^[A-Za-z]:$')
+
+
+def normalize_scan_path(path) -> Path:
+    """
+    Turn a bare Windows drive ("D:") into its root ("D:\\").
+
+    Path("D:") / "x" yields "D:x" (drive-relative, no separator), which never
+    matches paths stored by earlier scans and collides on files.path.
+    """
+    text = str(path).strip()
+    if _BARE_DRIVE.match(text):
+        text += '\\'
+    return Path(text)
 
 
 def get_live_progress(scan_id: str) -> Optional[dict]:
@@ -92,7 +111,7 @@ class ScanService:
         Returns:
             Scan session ID
         """
-        start_path = Path(start_path)
+        start_path = normalize_scan_path(start_path)
         scan_id = self.create_scan(start_path)
         compute_hashes = self.scanner.compute_hashes
 
@@ -121,8 +140,9 @@ class ScanService:
         Returns:
             Scan session ID
         """
-        scan_id = self.create_scan(Path(start_path))
-        self.run_scan(scan_id, Path(start_path), recursive, include_hidden)
+        start_path = normalize_scan_path(start_path)
+        scan_id = self.create_scan(start_path)
+        self.run_scan(scan_id, start_path, recursive, include_hidden)
         return scan_id
 
     def _count_files_fast(
@@ -184,26 +204,11 @@ class ScanService:
         to this scan) instead of inserted again, because files.path is unique.
         Errors are recorded on the scan session; they are not re-raised.
         """
-        start_path = Path(start_path)
+        start_path = normalize_scan_path(start_path)
         logger.info(f"Running scan {scan_id} for path: {start_path}")
 
         try:
             self.scanner.include_hidden = include_hidden
-            # Only the files already indexed under this folder can be touched by
-            # this scan, so only preload those instead of the whole files table
-            # (which can hold millions of rows from unrelated past scans).
-            prefix = str(start_path)
-            if not prefix.endswith(os.sep):
-                prefix += os.sep
-            escaped_prefix = (
-                prefix.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-            )
-            existing = {
-                f.path: f
-                for f in self.db.query(File)
-                .filter(File.path.like(escaped_prefix + '%', escape='\\'))
-                .all()
-            }
             now = datetime.utcnow()
 
             try:
@@ -219,14 +224,31 @@ class ScanService:
             seen_hashes: Dict[str, int] = {}
             potential_savings = 0
 
-            for metadata in self.scanner.scan(start_path, recursive):
-                path_str = str(metadata.path)
-                file_record = existing.get(path_str)
+            def batches():
+                it = iter(self.scanner.scan(start_path, recursive))
+                while True:
+                    chunk = list(itertools.islice(it, LOOKUP_CHUNK))
+                    if not chunk:
+                        return
+                    yield chunk
 
+            def records():
+                # Look up existing rows by exact path, one chunk at a time, so
+                # lookups never depend on how the root path was spelled.
+                for chunk in batches():
+                    self.db.flush()  # sessions use autoflush=False
+                    paths = [str(m.path) for m in chunk]
+                    found = {
+                        f.path: f
+                        for f in self.db.query(File).filter(File.path.in_(paths)).all()
+                    }
+                    for m, path_str in zip(chunk, paths):
+                        yield m, path_str, found.get(path_str)
+
+            for metadata, path_str, file_record in records():
                 if file_record is None:
                     file_record = File(path=path_str)
                     self.db.add(file_record)
-                    existing[path_str] = file_record
 
                 file_record.scan_id = scan_id
                 file_record.name = metadata.name

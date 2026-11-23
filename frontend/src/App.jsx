@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, NavLink } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 const Home = lazy(() => import('./pages/Home'));
 const Scan = lazy(() => import('./pages/Scan'));
 const Duplicates = lazy(() => import('./pages/Duplicates'));
@@ -12,6 +12,40 @@ import AgentChat from './components/AgentChat/AgentChat';
 import './App.css';
 import './styles/theme.css';
 import { initTheme } from './utils/theme';
+
+const PAGE_TITLES = {
+  '/': 'Dashboard',
+  '/scan': 'Scan',
+  '/duplicates': 'Duplicates',
+  '/cleanup': 'Cleanup',
+  '/organizer': 'Organizer',
+  '/usage': 'Usage',
+  '/settings': 'Settings',
+};
+
+function usePageTitle() {
+  const { pathname } = useLocation();
+  return PAGE_TITLES[pathname] || 'Storage Manager';
+}
+
+function Crumbs() {
+  const title = usePageTitle();
+  return (
+    <div className="crumbs" aria-label="Breadcrumb">
+      <span>{title}</span> / <b>{title}</b>
+    </div>
+  );
+}
+
+function PageBanner() {
+  const title = usePageTitle();
+  return (
+    <div className="page-banner">
+      <h2 className="page-title">{title}</h2>
+      <span className="status-pill"><i aria-hidden="true" /> Online</span>
+    </div>
+  );
+}
 
 /**
  * Main App Component
@@ -32,7 +66,14 @@ function App() {
         <nav className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
           <div className="logo">
             <span className="logo-icon">💾</span>
-            <span className="logo-text">Storage Manager</span>
+            <span className="logo-text">Storage<br />Master</span>
+            <button
+              className="collapse-btn"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            >
+              {sidebarOpen ? '‹' : '›'}
+            </button>
           </div>
 
           <ul className="nav-menu">
@@ -91,15 +132,16 @@ function App() {
               onClick={() => setSidebarOpen(!sidebarOpen)}
               title="Toggle Sidebar"
             >
-              {sidebarOpen ? '◀' : '▶'}
+              Menu
             </button>
-            <h1>Storage Manager Pro</h1>
+            <Crumbs />
             <div className="header-right">
               <span className="version">v1.0.0</span>
             </div>
           </header>
 
           <div className="content-area">
+            <PageBanner />
             <Suspense fallback={<div className="route-loading" role="status" aria-live="polite">Loading…</div>}>
             <Routes>
               <Route path="/" element={<Home />} />

@@ -10,6 +10,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 import DotGridBackground from './components/DotGridBackground/DotGridBackground';
 import AgentChat from './components/AgentChat/AgentChat';
 import './App.css';
+import './styles/theme.css';
 import { initTheme } from './utils/theme';
 
 /**

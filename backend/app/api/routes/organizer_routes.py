@@ -13,7 +13,9 @@ from ...api.schemas import (
     OrganizerCreateFolderRequest,
     OrganizerDeleteEmptyFoldersRequest,
     OrganizerDeleteFilesRequest,
+    OrganizerSortRequest,
 )
+from ...services.sort_service import SortService
 
 logger = logging.getLogger(__name__)
 
@@ -201,3 +203,31 @@ def delete_files(
     except Exception as e:
         logger.error(f"Failed to delete files: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _run_sort(request: OrganizerSortRequest, db: Session, apply: bool) -> dict:
+    try:
+        service = SortService(db)
+        fn = service.apply if apply else service.plan
+        result = fn(request.source, request.mode, request.granularity,
+                    request.recursive, request.destination)
+        if not apply:
+            result = {k: v for k, v in result.items() if k != 'moves'}
+        return {'success': True, 'data': result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Sort failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sort/preview", response_model=dict)
+def preview_sort(request: OrganizerSortRequest, db: Session = Depends(get_db)):
+    """Show what an auto-sort would move, without touching any file"""
+    return _run_sort(request, db, apply=False)
+
+
+@router.post("/sort/apply", response_model=dict)
+def apply_sort(request: OrganizerSortRequest, db: Session = Depends(get_db)):
+    """Apply an auto-sort. Returns an operation_id that can be undone via /api/journal."""
+    return _run_sort(request, db, apply=True)

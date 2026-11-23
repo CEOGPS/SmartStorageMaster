@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { sendAgentMessage } from '../../services/api';
+import AgentAvatar from './AgentAvatar';
 import './AgentChat.css';
 
 /**
@@ -15,7 +16,29 @@ function AgentChat() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [expandedActions, setExpandedActions] = useState({});
+  const [speaking, setSpeaking] = useState(false);
   const scrollRef = useRef(null);
+  const inputRef = useRef(null);
+  const speakTimer = useRef(null);
+
+  const avatarState = loading ? 'thinking' : speaking ? 'speaking' : 'idle';
+
+  useEffect(() => () => clearTimeout(speakTimer.current), []);
+
+  // Focus the input when the panel opens; Escape closes it
+  useEffect(() => {
+    if (!open) return undefined;
+    const t = setTimeout(() => inputRef.current?.focus(), 200);
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => { clearTimeout(t); window.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  const startSpeaking = (text) => {
+    clearTimeout(speakTimer.current);
+    setSpeaking(true);
+    speakTimer.current = setTimeout(() => setSpeaking(false), Math.min(6000, Math.max(1500, text.length * 25)));
+  };
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -39,6 +62,7 @@ function AgentChat() {
 
     try {
       const data = await sendAgentMessage(text, history);
+      startSpeaking(data?.reply || '');
       setMessages((prev) => [
         ...prev,
         {
@@ -70,10 +94,23 @@ function AgentChat() {
 
   return (
     <div className="agent-chat-root">
-      {open && (
-        <div className="agent-chat-panel">
+      <div
+        id="agent-chat-panel"
+        className={`agent-chat-panel${open ? ' is-open' : ''}`}
+        role="dialog"
+        aria-label="AI assistant"
+        aria-hidden={!open}
+        inert={!open ? '' : undefined}
+      >
+        <>
           <div className="agent-chat-header">
-            <span className="agent-chat-title">AI Assistant</span>
+            <AgentAvatar state={avatarState} size="sm" />
+            <span className="agent-chat-title">
+              Zoie
+              <small className={`agent-chat-status is-${avatarState}`}>
+                {avatarState === 'idle' ? 'Ready' : avatarState === 'thinking' ? 'Thinking…' : 'Speaking'}
+              </small>
+            </span>
             <button
               className="agent-chat-close"
               onClick={() => setOpen(false)}
@@ -84,7 +121,7 @@ function AgentChat() {
             </button>
           </div>
 
-          <div className="agent-chat-messages" ref={scrollRef}>
+          <div className="agent-chat-messages" ref={scrollRef} role="log" aria-live="polite">
             {messages.length === 0 && (
               <div className="agent-chat-empty">
                 Try asking things like "scan C:\Users\Me and tell me what's
@@ -133,6 +170,8 @@ function AgentChat() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={loading}
+              ref={inputRef}
+              aria-label="Message the assistant"
             />
             <button
               className="agent-chat-send"
@@ -142,16 +181,18 @@ function AgentChat() {
               Send
             </button>
           </div>
-        </div>
-      )}
+        </>
+      </div>
 
       <button
-        className="agent-chat-toggle"
+        className={`agent-chat-toggle${open ? ' is-open' : ''}`}
         onClick={() => setOpen((v) => !v)}
         title="AI Assistant"
-        aria-label="Toggle AI assistant chat"
+        aria-label={open ? 'Close AI assistant' : 'Open AI assistant'}
+        aria-expanded={open}
+        aria-controls="agent-chat-panel"
       >
-        {open ? '✕' : '💬'}
+        <AgentAvatar state={avatarState} size="md" />
       </button>
     </div>
   );

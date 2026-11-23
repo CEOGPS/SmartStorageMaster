@@ -16,7 +16,7 @@ EXCLUDED_DIRS = {
     '__pycache__', '.pytest_cache', '.mypy_cache', 'node_modules',  # Dev/build
     '.venv', 'venv', 'env',  # Virtual environments
     '.idea', '.vscode',  # IDE
-    '$Recycle.Bin', 'System Volume Information', '$WINDOWS.~BT',  # Windows system
+    '$Recycle.Bin', '$RECYCLE.BIN', 'System Volume Information', '$WINDOWS.~BT',  # Windows system
     '.Trash', '.Spotlight-V100', '.TemporaryItems',  # macOS
     '.cache', '.local',  # Linux
 }

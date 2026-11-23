@@ -19,7 +19,7 @@ import time
 import requests
 
 from ...db import get_db
-from ...services.scan_service import ScanService, get_live_progress
+from ...services.scan_service import ScanService, get_live_progress, normalize_scan_path
 from ...services.duplicate_service import DuplicateService
 from ...services.usage_service import UsageService
 from ...services.cleanup_service import CleanupService
@@ -215,7 +215,7 @@ def _get_tools(allow_destructive: bool) -> List[dict]:
 def _execute_tool(name: str, tool_input: dict, db: Session) -> dict:
     """Execute a tool by calling straight into the existing service classes."""
     if name == "start_scan":
-        path = Path(tool_input["path"]).expanduser()
+        path = normalize_scan_path(Path(tool_input["path"]).expanduser())
         if not path.exists() or not path.is_dir():
             return {"error": f"Path does not exist or is not a directory: {path}"}
 

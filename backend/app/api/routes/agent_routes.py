@@ -19,7 +19,8 @@ import time
 import requests
 
 from ...db import get_db
-from ...services.scan_service import ScanService, get_live_progress
+from ...services.scan_service import ScanService, ScanConflictError, get_live_progress
+from ...utils.path_utils import ScanPathError
 from ...services.duplicate_service import DuplicateService
 from ...services.usage_service import UsageService
 from ...services.cleanup_service import CleanupService
@@ -215,17 +216,21 @@ def _get_tools(allow_destructive: bool) -> List[dict]:
 def _execute_tool(name: str, tool_input: dict, db: Session) -> dict:
     """Execute a tool by calling straight into the existing service classes."""
     if name == "start_scan":
-        path = Path(tool_input["path"]).expanduser()
-        if not path.exists() or not path.is_dir():
-            return {"error": f"Path does not exist or is not a directory: {path}"}
-
         compute_hash = tool_input.get("compute_hash", True)
         service = ScanService(db, compute_hashes=compute_hash)
-        scan_id = service.start_scan_background(
-            path,
-            recursive=tool_input.get("recursive", True),
-            include_hidden=tool_input.get("include_hidden", False),
-        )
+        try:
+            scan_id = service.start_scan_background(
+                tool_input.get("path", ""),
+                recursive=tool_input.get("recursive", True),
+                include_hidden=tool_input.get("include_hidden", False),
+            )
+        except ScanConflictError as e:
+            if not e.same_path:
+                return {"error": str(e), "running_scan_id": e.scan_id}
+            return {"scan_id": e.scan_id, "status": "running",
+                    "message": f"That folder is already being scanned ({e.path})."}
+        except (ScanPathError, FileNotFoundError, NotADirectoryError) as e:
+            return {"error": str(e)}
 
         # Briefly poll for progress so a fast scan can report real numbers,
         # but never block the agent loop waiting for a long-running scan.
@@ -347,6 +352,25 @@ def _call_ollama(messages: List[dict], tools: List[dict]) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+@router.get("/status", response_model=dict)
+def agent_status():
+    """Whether the local Ollama model is reachable, for the dock's status light."""
+    online = False
+    model_installed = False
+    try:
+        resp = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=1.5)
+        online = resp.ok
+        if online:
+            names = {m.get("name") for m in resp.json().get("models", [])}
+            model_installed = OLLAMA_MODEL in names
+    except (requests.RequestException, ValueError):
+        online = False
+    return {
+        "success": True,
+        "data": {"online": online, "model": OLLAMA_MODEL, "model_installed": model_installed},
+    }
 
 
 @router.post("/chat", response_model=dict)

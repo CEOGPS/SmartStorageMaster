@@ -67,6 +67,13 @@ def init_db(db_url: str = None, echo: bool = False):
         def set_sqlite_pragma(dbapi_conn, connection_record):
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            # WAL lets readers (status polling, other pages) run while a scan
+            # thread writes; busy_timeout waits for a lock instead of failing
+            # immediately with "database is locked".
+            cursor.execute("PRAGMA busy_timeout=30000")
+            if ":memory:" not in (db_url or ""):
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.close()
     
     logger.info(f"Database initialized: {config.db_url}")

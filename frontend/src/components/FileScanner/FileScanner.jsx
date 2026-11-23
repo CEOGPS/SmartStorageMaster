@@ -1,187 +1,299 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { startScan, getScanStatistics, formatBytes } from '../../services/api';
+import {
+  startScan,
+  getScanStatistics,
+  validateScanPath,
+  getScanRoots,
+  getScanHistory,
+  getScanSummary,
+  cancelScan,
+  formatBytes,
+} from '../../services/api';
+import FolderPicker from './FolderPicker';
 import './FileScanner.css';
 
 // Scan keeps running server-side regardless of this component's lifetime;
 // this key lets us reattach to it after navigating away and back.
 const ACTIVE_SCAN_KEY = 'ssm.activeScan';
+const OPTIONS_KEY = 'ssm.scanOptions';
+const DEFAULT_OPTIONS = { recursive: true, includeHidden: false, computeHash: true };
+
+const PHASE_LABELS = {
+  starting: 'Starting…',
+  indexing: 'Indexing files',
+  'analyzing usage': 'Analyzing usage',
+  'finding duplicates': 'Finding duplicates',
+  cancelling: 'Stopping…',
+};
+
+const CATEGORY_ICONS = {
+  image: '🖼️', video: '🎬', audio: '🎵', document: '📄', archive: '🗜️', program: '⚙️', other: '📦',
+};
+
+function readJson(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key, value) {
+  try {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    console.warn(`Could not save ${key}:`, err);
+  }
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  // Backend timestamps are naive UTC
+  const then = new Date(iso.endsWith('Z') ? iso : `${iso}Z`).getTime();
+  const s = Math.max(0, (Date.now() - then) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
+function formatDuration(seconds) {
+  if (seconds == null) return '';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  return `${m}m ${Math.round(seconds % 60)}s`;
+}
 
 export default function FileScanner({ onScanStart }) {
   const navigate = useNavigate();
   const [selectedPath, setSelectedPath] = useState('');
+  const [options, setOptions] = useState(() => ({ ...DEFAULT_OPTIONS, ...readJson(OPTIONS_KEY, {}) }));
+  const [pathInfo, setPathInfo] = useState(null);
+  const [roots, setRoots] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const [scanId, setScanId] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [hasProgressEvent, setHasProgressEvent] = useState(false);
   const [scanStats, setScanStats] = useState(null);
   const [scanError, setScanError] = useState(null);
   const [scanResult, setScanResult] = useState(null);
-  const [startedAt, setStartedAt] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [notice, setNotice] = useState(null);
   const [elapsed, setElapsed] = useState(0);
+
   const wsRef = useRef(null);
   const tickRef = useRef(null);
+  const pollRef = useRef(null);
 
-  const handlePathChange = (e) => setSelectedPath(e.target.value);
+  const refreshHistory = useCallback(() => {
+    getScanHistory(6).then(setHistory).catch(() => setHistory([]));
+  }, []);
 
-  const handleBrowse = async () => {
-    try {
-      const api = window.electron;
-      const path = api?.openFileDialog
-        ? await api.openFileDialog()
-        : api?.ipcRenderer?.invoke
-          ? await api.ipcRenderer.invoke('select-folder')
-          : null;
-      if (path) setSelectedPath(path);
-    } catch (err) {
-      console.error('Browse failed:', err);
+  useEffect(() => {
+    getScanRoots().then(setRoots).catch(() => setRoots([]));
+    refreshHistory();
+  }, [refreshHistory]);
+
+  useEffect(() => writeJson(OPTIONS_KEY, options), [options]);
+
+  // Live validation: show the folder that will actually be scanned
+  // (e.g. "D:" -> "D:\") and catch typos before starting.
+  useEffect(() => {
+    if (!selectedPath.trim() || isScanning) {
+      setPathInfo(null);
+      return undefined;
     }
-  };
+    const handle = setTimeout(() => {
+      validateScanPath(selectedPath).then(setPathInfo).catch(() => setPathInfo(null));
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [selectedPath, isScanning]);
 
-  const clearActiveScan = () => {
-    try {
-      localStorage.removeItem(ACTIVE_SCAN_KEY);
-    } catch (err) {
-      console.warn('Could not clear active scan from storage:', err);
-    }
-  };
-
-  const resetScanState = () => {
-    clearActiveScan();
+  const stopWatching = () => {
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.close();
       wsRef.current = null;
     }
-    if (tickRef.current) {
-      clearInterval(tickRef.current);
-      tickRef.current = null;
-    }
+    clearInterval(tickRef.current);
+    clearInterval(pollRef.current);
+    tickRef.current = null;
+    pollRef.current = null;
+  };
+
+  useEffect(() => stopWatching, []);
+
+  const resetScanState = () => {
+    writeJson(ACTIVE_SCAN_KEY, null);
+    stopWatching();
+    setScanId(null);
     setIsScanning(false);
     setProgress(0);
     setHasProgressEvent(false);
     setScanStats(null);
     setScanError(null);
     setScanResult(null);
-    setStartedAt(null);
+    setSummary(null);
+    setNotice(null);
     setElapsed(0);
   };
 
-  // Opens (or reopens, after navigating back) the WebSocket that streams
-  // progress for a scan the backend is already running, and keeps the
-  // scan_id in localStorage so it survives this component unmounting.
-  const attachToScan = (scanId, path, start) => {
-    setIsScanning(true);
-    setScanError(null);
-    setScanResult(null);
-    setStartedAt(start);
-
-    try {
-      localStorage.setItem(
-        ACTIVE_SCAN_KEY,
-        JSON.stringify({ scanId, path, startedAt: start })
-      );
-    } catch (err) {
-      console.warn('Could not persist active scan to storage:', err);
+  // One handler for both WebSocket messages and polled status snapshots.
+  const applyUpdate = (id, data) => {
+    if (typeof data.percentage === 'number' && (data.total_estimated > 0 || data.percentage > 0)) {
+      setProgress(data.percentage);
+      setHasProgressEvent(true);
     }
+    setScanStats({
+      phase: data.phase || 'indexing',
+      filesFound: data.files_found ?? 0,
+      totalSize: data.total_size ?? 0,
+      potentialSavings: data.potential_savings ?? 0,
+      totalEstimated: data.total_estimated ?? 0,
+      filesPerSecond: data.files_per_second ?? 0,
+      hashesReused: data.hashes_reused ?? 0,
+      skippedFolders: data.skipped_folders ?? 0,
+      currentFolder: data.current_folder ?? '',
+      currentFile: data.current_file ?? '',
+    });
 
-    if (tickRef.current) clearInterval(tickRef.current);
-    tickRef.current = setInterval(() => setElapsed((Date.now() - start) / 1000), 500);
+    const status = data.status;
+    if (!['completed', 'failed', 'cancelled', 'interrupted'].includes(status)) return;
 
-    const ws = new WebSocket(`ws://127.0.0.1:8000/ws/scan?scan_id=${scanId}`);
-    wsRef.current = ws;
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+    stopWatching();
+    writeJson(ACTIVE_SCAN_KEY, null);
+    setIsScanning(false);
+    refreshHistory();
 
-      if (typeof data.percentage === 'number') {
-        setProgress(data.percentage);
-        setHasProgressEvent(true);
-      }
-      setScanStats({
+    if (status === 'completed') {
+      setProgress(100);
+      setScanResult({
+        status,
         filesFound: data.files_found ?? 0,
         totalSize: data.total_size ?? 0,
         potentialSavings: data.potential_savings ?? 0,
-        currentFolder: data.current_folder ?? '',
-        currentFile: data.current_file ?? '',
+        duplicateGroups: data.duplicate_groups,
+        hashesReused: data.hashes_reused ?? 0,
+        filesPerSecond: data.files_per_second ?? 0,
       });
+      getScanSummary(id).then(setSummary).catch(() => setSummary(null));
+      if (onScanStart) onScanStart();
+    } else if (status === 'cancelled') {
+      setScanResult({
+        status,
+        filesFound: data.files_found ?? 0,
+        totalSize: data.total_size ?? 0,
+        potentialSavings: data.potential_savings ?? 0,
+      });
+    } else {
+      setScanError(data.error_message || 'Scan failed for an unknown reason');
+    }
+  };
 
-      if (data.status === 'completed') {
-        clearInterval(tickRef.current);
-        clearActiveScan();
-        setIsScanning(false);
-        setProgress(100);
-        setScanResult({
-          status: 'completed',
-          filesFound: data.files_found ?? 0,
-          totalSize: data.total_size ?? 0,
-          potentialSavings: data.potential_savings ?? 0,
-        });
-        ws.close();
-        if (onScanStart) onScanStart();
-      } else if (data.status === 'failed') {
-        clearInterval(tickRef.current);
-        clearActiveScan();
-        setIsScanning(false);
-        setScanError(data.error_message || 'Scan failed for an unknown reason');
-        ws.close();
+  // Polling fallback if the WebSocket cannot connect or drops mid-scan.
+  const startPolling = (id) => {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await getScanStatistics(id);
+        const p = status?.progress || {};
+        applyUpdate(id, { ...p, status: p.status || status?.status, error_message: p.error_message || status?.error_message });
+      } catch (err) {
+        console.warn('Status poll failed:', err);
+      }
+    }, 1000);
+  };
+
+  const attachToScan = (id, path, start) => {
+    stopWatching();
+    setScanId(id);
+    setIsScanning(true);
+    setScanError(null);
+    setScanResult(null);
+    setSummary(null);
+    writeJson(ACTIVE_SCAN_KEY, { scanId: id, path, startedAt: start });
+
+    setElapsed((Date.now() - start) / 1000);
+    tickRef.current = setInterval(() => setElapsed((Date.now() - start) / 1000), 500);
+
+    let ws;
+    try {
+      ws = new WebSocket(`ws://127.0.0.1:8000/ws/scan?scan_id=${encodeURIComponent(id)}`);
+    } catch {
+      startPolling(id);
+      return;
+    }
+    wsRef.current = ws;
+    ws.onmessage = (event) => {
+      try {
+        applyUpdate(id, JSON.parse(event.data));
+      } catch (err) {
+        console.warn('Bad progress message:', err);
       }
     };
-    ws.onerror = (err) => {
-      console.error('WS error:', err);
-    };
+    ws.onerror = () => startPolling(id);
     ws.onclose = () => {
-      clearInterval(tickRef.current);
-      setIsScanning(false);
+      wsRef.current = null;
+      // Closed before a final status: keep following the scan by polling
+      startPolling(id);
     };
   };
 
   // On mount (including returning to this page), reattach to a scan that is
-  // still running server-side instead of showing a blank "Start Scanning" state.
+  // still running server-side instead of showing a blank "Start" state.
   useEffect(() => {
-    let saved;
-    try {
-      saved = JSON.parse(localStorage.getItem(ACTIVE_SCAN_KEY) || 'null');
-    } catch {
-      saved = null;
-    }
+    const saved = readJson(ACTIVE_SCAN_KEY, null);
     if (!saved?.scanId) return;
-
     (async () => {
       try {
         const status = await getScanStatistics(saved.scanId);
-        if (status?.status === 'completed') {
-          clearActiveScan();
-          const p = status.progress || {};
-          setScanResult({
-            status: 'completed',
-            filesFound: p.files_found ?? status.total_files ?? 0,
-            totalSize: p.total_size ?? status.total_size ?? 0,
-            potentialSavings: p.potential_savings ?? 0,
-          });
-        } else if (status?.status === 'failed') {
-          clearActiveScan();
-          setScanError(status.error_message || 'Scan failed for an unknown reason');
-        } else if (status?.status === 'running') {
-          setSelectedPath(saved.path || '');
+        setSelectedPath(saved.path || status?.path || '');
+        if (status?.status === 'running') {
           attachToScan(saved.scanId, saved.path, saved.startedAt || Date.now());
         } else {
-          clearActiveScan();
+          applyUpdate(saved.scanId, {
+            ...(status?.progress || {}),
+            status: status?.status,
+            error_message: status?.error_message,
+          });
         }
       } catch (err) {
         console.warn('Could not reattach to saved scan:', err);
-        clearActiveScan();
+        writeJson(ACTIVE_SCAN_KEY, null);
       }
     })();
-
-    return () => {
-      if (wsRef.current) wsRef.current.close();
-      if (tickRef.current) clearInterval(tickRef.current);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleScan = async () => {
-    if (!selectedPath) {
-      alert('Please select a folder');
+  const handleBrowse = async () => {
+    const api = window.electron;
+    if (api?.openFileDialog) {
+      try {
+        const path = await api.openFileDialog();
+        if (path) setSelectedPath(path);
+      } catch (err) {
+        console.error('Browse failed:', err);
+        setPickerOpen(true);
+      }
+      return;
+    }
+    setPickerOpen(true);
+  };
+
+  const handleScan = async (pathOverride) => {
+    const path = (typeof pathOverride === 'string' ? pathOverride : selectedPath).trim();
+    if (!path) {
+      setScanError('Choose a folder to scan first.');
+      return;
+    }
+    if (pathInfo && pathInfo.input === path && !pathInfo.is_dir) {
+      setScanError(pathInfo.message);
       return;
     }
 
@@ -191,23 +303,44 @@ export default function FileScanner({ onScanStart }) {
     setScanStats(null);
     setScanError(null);
     setScanResult(null);
+    setNotice(null);
 
     try {
-      const result = await startScan(selectedPath, {
-        recursive: true,
-        includeHidden: false,
-        computeHash: true,
-      });
-      const scanId = result?.scan_id ?? result?.data?.scan_id;
-      if (!scanId) throw new Error('Backend did not return scan_id');
-
-      attachToScan(scanId, selectedPath, Date.now());
+      const result = await startScan(path, options);
+      if (!result?.scan_id) throw new Error('Backend did not return scan_id');
+      setSelectedPath(result.path || path);
+      if (result.alreadyRunning) setNotice(result.message);
+      attachToScan(result.scan_id, result.path || path, Date.now());
     } catch (error) {
       console.error('Scan failed:', error);
       setIsScanning(false);
       setScanError(error.message);
     }
   };
+
+  const handleCancel = async () => {
+    if (!scanId) return;
+    setScanStats((s) => (s ? { ...s, phase: 'cancelling' } : s));
+    try {
+      await cancelScan(scanId);
+    } catch (err) {
+      setNotice(`Could not stop the scan: ${err.message}`);
+    }
+  };
+
+  const toggleOption = (key) => setOptions((o) => ({ ...o, [key]: !o[key] }));
+
+  const pathHint = pathInfo && !isScanning && (
+    <p className={`path-hint ${pathInfo.is_dir && pathInfo.readable ? 'ok' : 'bad'}`}>
+      {pathInfo.is_dir && pathInfo.readable
+        ? pathInfo.path !== pathInfo.input.trim()
+          ? `Will scan ${pathInfo.path}`
+          : 'Ready to scan'
+        : pathInfo.message}
+    </p>
+  );
+
+  const maxCategory = summary?.by_category?.[0]?.size || 1;
 
   return (
     <div className="file-scanner">
@@ -224,19 +357,40 @@ export default function FileScanner({ onScanStart }) {
               id="folder-path"
               type="text"
               value={selectedPath}
-              onChange={handlePathChange}
+              onChange={(e) => setSelectedPath(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !isScanning && handleScan()}
               placeholder="C:\Users\YourName\Documents"
               className="path-input"
               disabled={isScanning}
+              spellCheck={false}
+              autoComplete="off"
             />
             <button className="browse-btn" onClick={handleBrowse} disabled={isScanning}>
               Browse...
             </button>
           </div>
+          {pathHint}
+          {roots.length > 0 && !isScanning && (
+            <div className="quick-picks" aria-label="Quick picks">
+              {roots.map((r) => (
+                <button
+                  key={r.path}
+                  type="button"
+                  className={`quick-pick ${r.kind}`}
+                  onClick={() => setSelectedPath(r.path)}
+                  title={r.path}
+                >
+                  {r.kind === 'drive' ? '💽' : '📂'} {r.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
+        {notice && <p className="scan-notice">{notice}</p>}
+
         {!isScanning && !scanResult && !scanError && (
-          <button className="scan-btn primary" onClick={handleScan}>
+          <button className="scan-btn primary" onClick={() => handleScan()}>
             🔍 Start Scanning
           </button>
         )}
@@ -251,7 +405,9 @@ export default function FileScanner({ onScanStart }) {
               )}
             </div>
             <div className="progress-text">
-              <span className="status">Scanning... {hasProgressEvent ? `${progress}%` : ''}</span>
+              <span className="status">
+                {PHASE_LABELS[scanStats?.phase] || 'Scanning…'} {hasProgressEvent ? `${progress}%` : ''}
+              </span>
               <span className="elapsed">{elapsed.toFixed(0)}s elapsed</span>
             </div>
 
@@ -261,7 +417,12 @@ export default function FileScanner({ onScanStart }) {
                   <div className="stat-card">
                     <span className="stat-icon">🗂️</span>
                     <span className="stat-label">Files Found</span>
-                    <span className="stat-value">{scanStats.filesFound.toLocaleString()}</span>
+                    <span className="stat-value">
+                      {scanStats.filesFound.toLocaleString()}
+                      {scanStats.totalEstimated > 0 && (
+                        <small> / {scanStats.totalEstimated.toLocaleString()}</small>
+                      )}
+                    </span>
                   </div>
                   <div className="stat-card">
                     <span className="stat-icon">💽</span>
@@ -274,12 +435,20 @@ export default function FileScanner({ onScanStart }) {
                     <span className="stat-value">{formatBytes(scanStats.potentialSavings)}</span>
                   </div>
                   <div className="stat-card">
-                    <span className="stat-icon">⏱️</span>
-                    <span className="stat-label">Elapsed</span>
-                    <span className="stat-value">{elapsed.toFixed(0)}s</span>
+                    <span className="stat-icon">⚡</span>
+                    <span className="stat-label">Speed</span>
+                    <span className="stat-value">{Math.round(scanStats.filesPerSecond).toLocaleString()}/s</span>
                   </div>
                 </div>
-                <div className="scan-current-line truncate">
+                <div className="scan-meta-line">
+                  {scanStats.hashesReused > 0 && (
+                    <span>{scanStats.hashesReused.toLocaleString()} unchanged files skipped re-hashing</span>
+                  )}
+                  {scanStats.skippedFolders > 0 && (
+                    <span>{scanStats.skippedFolders.toLocaleString()} folders not readable</span>
+                  )}
+                </div>
+                <div className="scan-current-line truncate" title={scanStats.currentFolder}>
                   <span className="current-folder">{scanStats.currentFolder}</span>
                   {scanStats.currentFile && (
                     <span className="current-file"> / {scanStats.currentFile}</span>
@@ -287,13 +456,21 @@ export default function FileScanner({ onScanStart }) {
                 </div>
               </>
             )}
+            <button
+              type="button"
+              className="scan-btn ghost stop-btn"
+              onClick={handleCancel}
+              disabled={!scanId || scanStats?.phase === 'cancelling'}
+            >
+              ■ Stop scan
+            </button>
           </div>
         )}
 
-        {scanResult && scanResult.status === 'completed' && (
-          <div className="scan-result-card success">
-            <div className="result-icon">✅</div>
-            <h3>Scan Complete</h3>
+        {scanResult && (
+          <div className={`scan-result-card ${scanResult.status === 'completed' ? 'success' : 'warn'}`}>
+            <div className="result-icon">{scanResult.status === 'completed' ? '✅' : '⏹️'}</div>
+            <h3>{scanResult.status === 'completed' ? 'Scan Complete' : 'Scan Stopped'}</h3>
             <div className="result-stats">
               <div className="result-stat">
                 <span className="label">Files Found</span>
@@ -307,7 +484,47 @@ export default function FileScanner({ onScanStart }) {
                 <span className="label">Potential Savings</span>
                 <span className="value">{formatBytes(scanResult.potentialSavings)}</span>
               </div>
+              {scanResult.duplicateGroups != null && (
+                <div className="result-stat">
+                  <span className="label">Duplicate Groups</span>
+                  <span className="value">{scanResult.duplicateGroups.toLocaleString()}</span>
+                </div>
+              )}
             </div>
+
+            {summary?.by_category?.length > 0 && (
+              <div className="result-breakdown">
+                <h4>Where the space goes</h4>
+                {summary.by_category.map((c) => (
+                  <div className="breakdown-row" key={c.category}>
+                    <span className="breakdown-label">
+                      {CATEGORY_ICONS[c.category] || '📦'} {c.category}
+                    </span>
+                    <span className="breakdown-bar">
+                      <span style={{ width: `${Math.max(2, (c.size / maxCategory) * 100)}%` }} />
+                    </span>
+                    <span className="breakdown-value">
+                      {formatBytes(c.size)} · {c.count.toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {summary?.largest_files?.length > 0 && (
+              <div className="result-largest">
+                <h4>Largest files</h4>
+                <ul>
+                  {summary.largest_files.map((f) => (
+                    <li key={f.id} title={f.path}>
+                      <span className="truncate">{f.name}</span>
+                      <span>{f.size_formatted}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="result-actions">
               <button className="scan-btn primary" onClick={() => navigate('/duplicates')}>
                 🔄 View Duplicates
@@ -338,41 +555,70 @@ export default function FileScanner({ onScanStart }) {
         <div className="scan-options">
           <h3>Scan Options</h3>
           <label className="checkbox-label">
-            <input type="checkbox" defaultChecked />
+            <input
+              type="checkbox"
+              checked={options.includeHidden}
+              onChange={() => toggleOption('includeHidden')}
+              disabled={isScanning}
+            />
             <span>Include hidden files</span>
           </label>
           <label className="checkbox-label">
-            <input type="checkbox" defaultChecked />
+            <input
+              type="checkbox"
+              checked={options.recursive}
+              onChange={() => toggleOption('recursive')}
+              disabled={isScanning}
+            />
             <span>Scan subfolders recursively</span>
           </label>
           <label className="checkbox-label">
-            <input type="checkbox" />
-            <span>Skip system folders</span>
-          </label>
-          <label className="checkbox-label">
-            <input type="checkbox" defaultChecked />
-            <span>Calculate file hashes</span>
+            <input
+              type="checkbox"
+              checked={options.computeHash}
+              onChange={() => toggleOption('computeHash')}
+              disabled={isScanning}
+            />
+            <span>Calculate file hashes (needed for exact duplicates)</span>
           </label>
         </div>
 
         <div className="recent-scans">
           <h3>Recent Scans</h3>
           <div className="recent-list">
-            <div className="recent-item">
-              <span className="path">C:\Users\User\Documents</span>
-              <span className="time">2 hours ago</span>
-            </div>
-            <div className="recent-item">
-              <span className="path">C:\Users\User\Pictures</span>
-              <span className="time">1 day ago</span>
-            </div>
-            <div className="recent-item">
-              <span className="path">D:\Archive</span>
-              <span className="time">1 week ago</span>
-            </div>
+            {history.length === 0 && <p className="recent-empty">No scans yet.</p>}
+            {history.map((h) => (
+              <button
+                type="button"
+                className="recent-item"
+                key={h.id}
+                onClick={() => !isScanning && setSelectedPath(h.path)}
+                disabled={isScanning}
+                title="Use this folder"
+              >
+                <span className="path truncate">{h.path}</span>
+                <span className={`recent-status ${h.status}`}>{h.status}</span>
+                <span className="time">
+                  {h.total_files ? `${h.total_files.toLocaleString()} files · ${h.total_size_formatted}` : ''}
+                  {h.duration_seconds != null ? ` · ${formatDuration(h.duration_seconds)}` : ''}
+                  {` · ${timeAgo(h.started_at)}`}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
       </div>
+
+      {pickerOpen && (
+        <FolderPicker
+          initialPath={pathInfo?.is_dir ? pathInfo.path : ''}
+          onClose={() => setPickerOpen(false)}
+          onPick={(path) => {
+            setSelectedPath(path);
+            setPickerOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

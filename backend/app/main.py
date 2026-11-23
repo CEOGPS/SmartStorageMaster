@@ -11,7 +11,7 @@ import os
 
 from .config import get_config
 from .db import init_db, create_all_tables, get_session
-from .services.scan_service import ScanService
+from .services.scan_service import ScanService, mark_interrupted_scans
 from .utils import setup_logging
 from .api.routes import scan_routes, cleanup_routes, duplicate_detect_routes, organizer_routes
 from .api import usage_routes, duplicate_routes
@@ -39,6 +39,7 @@ def create_app(environment: str = None) -> FastAPI:
         try:
             init_db(config.DATABASE_URL, config.ECHO_SQL)
             create_all_tables()
+            mark_interrupted_scans()
             logger.info("Database initialized")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}", exc_info=True)

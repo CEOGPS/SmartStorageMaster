@@ -29,9 +29,10 @@ async function request(path, options) {
 
 // Unwraps the backend's common {success, data, error} envelope.
 function unwrap(json) {
-  if (json && typeof json === 'object' && 'data' in json && 'success' in json) {
-    if (json.success === false) throw new Error(json.error || 'Request failed');
-    return json.data;
+  if (json && typeof json === 'object' && 'success' in json) {
+    // Error envelopes often carry only {success: false, error} with no data key
+    if (json.success === false) throw new Error(json.error || json.detail || 'Request failed');
+    if ('data' in json) return json.data;
   }
   return json;
 }
@@ -90,11 +91,41 @@ export async function startScan(path, options = {}) {
         compute_hash: options.computeHash !== false,
       }),
     });
-    return { scan_id: json.scan_id, message: json.message };
+    return {
+      scan_id: json.scan_id,
+      path: json.path || path,
+      alreadyRunning: Boolean(json.already_running),
+      message: json.message,
+    };
   } catch (error) {
     console.error('startScan error:', error);
     throw error;
   }
+}
+
+// Normalized path + whether it can be scanned, for the live hint under the input.
+export async function validateScanPath(path) {
+  return unwrap(await request(`/scan/validate?path=${encodeURIComponent(path)}`));
+}
+
+export async function getScanRoots() {
+  return unwrap(await request('/scan/roots')) || [];
+}
+
+export async function browseFolders(path = '') {
+  return unwrap(await request(`/scan/browse?path=${encodeURIComponent(path)}`));
+}
+
+export async function getScanHistory(limit = 6) {
+  return unwrap(await request(`/scan/history?limit=${limit}`)) || [];
+}
+
+export async function getScanSummary(scanId, top = 6) {
+  return unwrap(await request(`/scan/summary/${scanId}?top=${top}`));
+}
+
+export async function cancelScan(scanId) {
+  return unwrap(await request(`/scan/cancel/${scanId}`, { method: 'POST' }));
 }
 
 export async function getScanStatistics(scanId) {
@@ -353,6 +384,10 @@ export async function sendAgentMessage(message, history = []) {
     console.error('sendAgentMessage error:', error);
     throw error;
   }
+}
+
+export async function getAgentStatus() {
+  return unwrap(await request('/agent/status'));
 }
 
 // Organizer APIs

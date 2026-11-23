@@ -230,3 +230,12 @@ class OrganizerDeleteEmptyFoldersRequest(BaseModel):
 class OrganizerDeleteFilesRequest(BaseModel):
     """Request to backup and delete files"""
     file_ids: List[str] = Field(..., description="File IDs to delete")
+
+
+class OrganizerSortRequest(BaseModel):
+    """Request to preview or apply an auto-sort of a folder"""
+    source: str = Field(..., description="Folder whose indexed files should be sorted")
+    mode: str = Field(..., description="type | extension | date")
+    granularity: str = Field('year', description="For date mode: year | month")
+    recursive: bool = Field(False, description="Include files in subfolders")
+    destination: Optional[str] = Field(None, description="Sort into this root instead of the source folder")

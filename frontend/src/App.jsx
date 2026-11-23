@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink } from 'react-router-dom';
-import Home from './pages/Home';
-import Scan from './pages/Scan';
-import Duplicates from './pages/Duplicates';
-import Cleanup from './pages/Cleanup';
-import Organizer from './pages/Organizer';
-import Usage from './pages/Usage';
-import Settings from './pages/Settings';
+const Home = lazy(() => import('./pages/Home'));
+const Scan = lazy(() => import('./pages/Scan'));
+const Duplicates = lazy(() => import('./pages/Duplicates'));
+const Cleanup = lazy(() => import('./pages/Cleanup'));
+const Organizer = lazy(() => import('./pages/Organizer'));
+const Usage = lazy(() => import('./pages/Usage'));
+const Settings = lazy(() => import('./pages/Settings'));
 import DotGridBackground from './components/DotGridBackground/DotGridBackground';
 import AgentChat from './components/AgentChat/AgentChat';
 import './App.css';
@@ -99,6 +99,7 @@ function App() {
           </header>
 
           <div className="content-area">
+            <Suspense fallback={<div className="route-loading" role="status" aria-live="polite">Loading…</div>}>
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/scan" element={<Scan />} />
@@ -108,6 +109,7 @@ function App() {
                <Route path="/usage" element={<Usage />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
+            </Suspense>
           </div>
         </div>
       </div>

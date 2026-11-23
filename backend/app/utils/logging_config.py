@@ -25,6 +25,12 @@ def setup_logging(log_dir: Path = None, level: int = logging.INFO) -> None:
     # Root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
+
+    # create_app() runs once on import of app.main and again from run.py;
+    # without this guard every log line was written twice.
+    if getattr(root_logger, "_ssm_configured", False):
+        return
+    root_logger._ssm_configured = True
     
     # File handler
     fh = logging.handlers.RotatingFileHandler(

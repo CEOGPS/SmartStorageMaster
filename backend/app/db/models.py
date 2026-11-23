@@ -149,3 +149,32 @@ class UsageThreshold(Base):
     
     def __repr__(self):
         return f"<UsageThreshold(recently={self.recently_used_days}d, rarely={self.rarely_used_days}d, not_used={self.not_used_days}d)>"
+
+
+class Operation(Base):
+    """A reversible batch of file changes (move, rename, sort...) that can be undone as one unit"""
+    __tablename__ = "operations"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    kind = Column(String(32), nullable=False)  # move | rename | sort
+    summary = Column(String(512), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    undone_at = Column(DateTime, nullable=True)
+
+    items = relationship("OperationItem", back_populates="operation", cascade="all, delete-orphan",
+                         order_by="OperationItem.seq")
+
+
+class OperationItem(Base):
+    """One path change inside an Operation"""
+    __tablename__ = "operation_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    operation_id = Column(String(36), ForeignKey("operations.id"), nullable=False, index=True)
+    seq = Column(Integer, nullable=False)
+    file_id = Column(String(36), nullable=True)
+    src_path = Column(String(2048), nullable=False)
+    dst_path = Column(String(2048), nullable=False)
+    undone = Column(Boolean, nullable=False, default=False)
+
+    operation = relationship("Operation", back_populates="items")

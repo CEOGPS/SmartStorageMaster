@@ -13,7 +13,7 @@ from .config import get_config
 from .db import init_db, create_all_tables, get_session
 from .services.scan_service import ScanService
 from .utils import setup_logging
-from .api.routes import scan_routes, cleanup_routes, duplicate_detect_routes, organizer_routes
+from .api.routes import scan_routes, cleanup_routes, duplicate_detect_routes, organizer_routes, journal_routes
 from .api import usage_routes, duplicate_routes
 from .api.routes import compat_routes, agent_routes
 from . import api
@@ -70,6 +70,7 @@ def create_app(environment: str = None) -> FastAPI:
     app.include_router(duplicate_routes.router)
     app.include_router(agent_routes.router)
     app.include_router(organizer_routes.router)
+    app.include_router(journal_routes.router)
 
     @app.get("/health", tags=["health"])
     def health_check():

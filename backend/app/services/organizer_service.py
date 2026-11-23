@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import File
 from .cleanup_service import CleanupService
+from .journal_service import JournalService
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,9 @@ class OrganizerService:
                 logger.warning(f"Destination does not exist and create_if_missing=False: {destination}")
                 return {'moved': 0, 'failed': len(file_ids), 'total': len(file_ids)}
 
+        journal = JournalService(self.db)
+        op = journal.begin('move', f'Move {len(file_ids)} file(s) to {destination}')
+
         for file_id in file_ids:
             file_record = self.db.query(File).filter_by(id=file_id).first()
             if not file_record:
@@ -214,6 +218,7 @@ class OrganizerService:
                         counter += 1
 
                 shutil.move(str(source_path), str(dest_path))
+                journal.record(op, source_path, dest_path, file_id)
 
                 file_record.path = str(dest_path)
                 file_record.name = dest_path.name
@@ -223,9 +228,11 @@ class OrganizerService:
                 logger.error(f"Failed to move file {file_id}: {e}")
                 failed += 1
 
+        journal.discard_if_empty(op)
         self.db.commit()
 
-        return {'moved': moved, 'failed': failed, 'total': len(file_ids)}
+        return {'moved': moved, 'failed': failed, 'total': len(file_ids),
+                'operation_id': op.id if op.items else None}
 
     def delete_empty_folders(self, root: str) -> Dict:
         """

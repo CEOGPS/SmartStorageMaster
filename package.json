@@ -4,10 +4,11 @@
   "description": "AI-Powered Storage Manager Desktop Application",
   "main": "desktop/main.js",
   "scripts": {
+    "start": "node scripts/launch.mjs",
+    "start:desktop": "node scripts/launch.mjs --desktop",
     "dev": "electron .",
     "build": "npm run build:frontend && electron-builder",
     "build:frontend": "cd frontend && npm run build && cd ..",
-    "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },

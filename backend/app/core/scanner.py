@@ -128,10 +128,22 @@ class FileScanner:
             logger.error(f"Error during scan: {e}", exc_info=True)
             raise
     
+    def scan_sizes(self, root_path: Path, recursive: bool = True) -> Generator[int, None, None]:
+        """
+        Yield the size of every file ``scan`` would yield, using the same traversal
+        rules (hidden files, excluded folders and extensions) but only a stat call.
+        Used to find files whose size is unique and therefore cannot be duplicates.
+        """
+        root_path = Path(root_path)
+        if not root_path.is_dir():
+            return
+        yield from self._scan_recursive(root_path, recursive, light=True)
+
     def _scan_recursive(
         self,
         directory: Path,
         recursive: bool,
+        light: bool = False,
     ) -> Generator[FileMetadata, None, None]:
         """
         Recursively scan directory
@@ -159,11 +171,14 @@ class FileScanner:
                     # Skip excluded directories
                     if entry.name not in EXCLUDED_DIRS:
                         if recursive:
-                            yield from self._scan_recursive(entry, recursive)
+                            yield from self._scan_recursive(entry, recursive, light)
                 
                 elif entry.is_file(follow_symlinks=False):
                     # Skip files with excluded extensions
                     if entry.suffix.lower() not in EXCLUDED_EXTENSIONS:
+                        if light:
+                            yield entry.stat().st_size
+                            continue
                         metadata = self._get_file_metadata(entry)
                         if metadata:
                             yield metadata
@@ -204,10 +219,7 @@ class FileScanner:
             # One read per file. BLAKE3 (multi-threaded, memory-mapped) when
             # available; otherwise MD5 so duplicate detection keeps working.
             if self.compute_hashes:
-                if _blake3 is not None:
-                    metadata.hash_blake3 = self._blake3_hash(file_path)
-                else:
-                    metadata.hash_md5 = self._compute_hash(file_path, 'md5')
+                metadata.hash_blake3, metadata.hash_md5 = self.content_hashes(file_path)
             
             return metadata
         
@@ -215,6 +227,35 @@ class FileScanner:
             logger.warning(f"Cannot read file {file_path}: {e}")
             return None
     
+    @staticmethod
+    def hash_scheme() -> str:
+        """Which content hash new scans produce: 'blake3', or 'md5' if blake3 is missing"""
+        return 'blake3' if _blake3 is not None else 'md5'
+
+    @classmethod
+    def content_hashes(cls, file_path: Path):
+        """
+        Content hashes for one file as ``(blake3, md5)``.
+
+        BLAKE3 when the library is available (md5 is then None); otherwise MD5 only,
+        so duplicate detection keeps working. Both are None if the file is unreadable.
+        """
+        if _blake3 is not None:
+            return cls._blake3_hash(file_path), None
+        return None, cls._compute_hash_static(file_path, 'md5')
+
+    @staticmethod
+    def _compute_hash_static(file_path: Path, algorithm: str) -> Optional[str]:
+        try:
+            hash_func = hashlib.new(algorithm)
+            with open(file_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(_HASH_CHUNK), b''):
+                    hash_func.update(chunk)
+            return hash_func.hexdigest()
+        except (PermissionError, OSError) as e:
+            logger.warning(f"Cannot compute hash for {file_path}: {e}")
+            return None
+
     @staticmethod
     def _blake3_hash(file_path: Path) -> Optional[str]:
         """BLAKE3 hex digest of a file, or None if it cannot be read"""

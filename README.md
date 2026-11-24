@@ -46,6 +46,18 @@ smart-storage-manager/
 
 ## 🚀 Quick Start
 
+### One command (recommended)
+
+You need **Python 3.9+** and **Node.js 18+** installed. Then:
+
+- **Windows:** double-click `start.bat`
+- **macOS / Linux:** run `./start.sh`
+- **Any OS:** `npm start` (browser) or `npm run start:desktop` (Electron window)
+
+The first run installs the backend and frontend packages automatically. After that it starts the backend (port 8000, this computer only) and the web UI (port 3000), waits until both are ready, and opens the app. Press **Ctrl+C**, or close the Electron window, to stop everything.
+
+The manual steps below are still available if you prefer to run each part yourself.
+
 ### Prerequisites
 
 - **Python 3.10+**

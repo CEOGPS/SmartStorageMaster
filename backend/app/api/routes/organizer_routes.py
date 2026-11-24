@@ -14,7 +14,9 @@ from ...api.schemas import (
     OrganizerDeleteEmptyFoldersRequest,
     OrganizerDeleteFilesRequest,
     OrganizerSortRequest,
+    OrganizerRenameRequest,
 )
+from ...services.rename_service import RenameService, RenameError
 from ...services.sort_service import SortService
 
 logger = logging.getLogger(__name__)
@@ -231,3 +233,30 @@ def preview_sort(request: OrganizerSortRequest, db: Session = Depends(get_db)):
 def apply_sort(request: OrganizerSortRequest, db: Session = Depends(get_db)):
     """Apply an auto-sort. Returns an operation_id that can be undone via /api/journal."""
     return _run_sort(request, db, apply=True)
+
+
+def _run_rename(request: OrganizerRenameRequest, db: Session, apply: bool) -> dict:
+    try:
+        service = RenameService(db)
+        opts = request.model_dump() if hasattr(request, 'model_dump') else request.dict()
+        result = service.apply(**opts) if apply else service.plan(**opts)
+        if not apply:
+            result = {k: v for k, v in result.items() if k != 'items'}
+        return {'success': True, 'data': result}
+    except RenameError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Rename failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/rename/preview", response_model=dict)
+def preview_rename(request: OrganizerRenameRequest, db: Session = Depends(get_db)):
+    """Show old -> new names, conflicts and errors without renaming anything"""
+    return _run_rename(request, db, apply=False)
+
+
+@router.post("/rename/apply", response_model=dict)
+def apply_rename(request: OrganizerRenameRequest, db: Session = Depends(get_db)):
+    """Rename files. Returns an operation_id that can be undone via /api/journal."""
+    return _run_rename(request, db, apply=True)

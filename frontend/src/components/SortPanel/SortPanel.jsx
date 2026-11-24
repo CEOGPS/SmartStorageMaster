@@ -1,10 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   listOrganizerFolders,
   previewSort,
   applySort,
-  listJournal,
-  undoOperation,
 } from '../../services/api';
 import ConfirmModal from '../UI/ConfirmModal';
 import './SortPanel.css';
@@ -15,7 +13,7 @@ const MODES = [
   { key: 'date', label: 'By date', hint: 'Modified year or month' },
 ];
 
-export default function SortPanel() {
+export default function SortPanel({ folders: folderList, onChanged }) {
   const [folders, setFolders] = useState([]);
   const [source, setSource] = useState('');
   const [mode, setMode] = useState('type');
@@ -25,24 +23,13 @@ export default function SortPanel() {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [message, setMessage] = useState(null); // {type: 'ok'|'error', text}
-  const [history, setHistory] = useState([]);
 
   const opts = { source: source.trim(), mode, granularity, recursive };
 
-  const refreshHistory = useCallback(async () => {
-    try {
-      setHistory(await listJournal(10));
-    } catch {
-      setHistory([]);
-    }
-  }, []);
-
   useEffect(() => {
-    listOrganizerFolders()
-      .then((d) => setFolders(d?.folders || []))
-      .catch(() => setFolders([]));
-    refreshHistory();
-  }, [refreshHistory]);
+    if (folderList) { setFolders(folderList); return; }
+    listOrganizerFolders().then((d) => setFolders(d?.folders || [])).catch(() => setFolders([]));
+  }, [folderList]);
 
   // Any option change invalidates the previous preview
   useEffect(() => { setPlan(null); }, [source, mode, granularity, recursive]);
@@ -76,20 +63,9 @@ export default function SortPanel() {
     const failed = result.failed?.length || 0;
     setMessage({
       type: failed ? 'error' : 'ok',
-      text: `Moved ${result.moved} file(s)${failed ? `, ${failed} could not be moved` : ''}. You can undo this below.`,
+      text: `Moved ${result.moved} file(s)${failed ? `, ${failed} could not be moved` : ''}. You can undo it under Recent changes.`,
     });
-    refreshHistory();
-  };
-
-  const handleUndo = async (id) => {
-    const result = await run(() => undoOperation(id));
-    if (!result) return;
-    const skipped = result.skipped?.length || 0;
-    setMessage({
-      type: skipped ? 'error' : 'ok',
-      text: `Restored ${result.restored} file(s)${skipped ? `; ${skipped} skipped because they changed since (not overwritten)` : ''}.`,
-    });
-    refreshHistory();
+    onChanged?.();
   };
 
   return (
@@ -168,27 +144,6 @@ export default function SortPanel() {
             <p className="sort-more">{plan.missing_on_disk} indexed file(s) no longer exist on disk and were skipped. Re-scan to refresh.</p>
           )}
         </div>
-      )}
-
-      <h4 className="sort-history-title">Recent changes</h4>
-      {history.length === 0 ? (
-        <p className="sort-more">No sorts or moves yet.</p>
-      ) : (
-        <ul className="sort-history">
-          {history.map((h) => (
-            <li key={h.id}>
-              <span className="sort-history-text">
-                <b>{h.summary || h.kind}</b>
-                <small>{new Date(h.created_at + 'Z').toLocaleString()} · {h.item_count} file(s)</small>
-              </span>
-              {h.undone ? (
-                <em>Undone</em>
-              ) : (
-                <button className="sort-btn" onClick={() => handleUndo(h.id)} disabled={busy}>Undo</button>
-              )}
-            </li>
-          ))}
-        </ul>
       )}
 
       <ConfirmModal

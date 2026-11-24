@@ -239,3 +239,21 @@ class OrganizerSortRequest(BaseModel):
     granularity: str = Field('year', description="For date mode: year | month")
     recursive: bool = Field(False, description="Include files in subfolders")
     destination: Optional[str] = Field(None, description="Sort into this root instead of the source folder")
+
+
+class OrganizerRenameRequest(BaseModel):
+    """Request to preview or apply a bulk rename"""
+    template: str = Field('{name}', description="New name without extension; tokens {name} {n} {n:3} {date:%Y-%m-%d} {created:...} {parent} {size_kb}")
+    find: str = Field('', description="Text or regex to find in the original name")
+    replace: str = Field('', description="Replacement (regex mode supports \\1 back-references)")
+    use_regex: bool = Field(False)
+    case_sensitive: bool = Field(False)
+    case: str = Field('none', description="none | lower | upper | title")
+    ext_case: str = Field('keep', description="keep | lower | upper")
+    start: int = Field(1, description="First sequence number for {n}")
+    step: int = Field(1, description="Sequence increment")
+    order: str = Field('name', description="Numbering order: name | modified | size")
+    file_ids: Optional[List[str]] = Field(None, description="Rename exactly these files")
+    folder: Optional[str] = Field(None, description="Or rename indexed files in this folder")
+    recursive: bool = Field(False)
+    match: Optional[str] = Field(None, description="Only files whose name matches this regex")

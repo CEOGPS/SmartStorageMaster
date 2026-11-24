@@ -12,7 +12,7 @@ const TOKENS = [
   { t: '{parent}', d: 'folder name' },
   { t: '{size_kb}', d: 'size in KB' },
 ];
-const STATUS_LABEL = { ok: 'Will rename', unchanged: 'No change', conflict: 'Conflict', error: 'Invalid' };
+const STATUS_LABEL = { ok: 'Will rename', unchanged: 'No change', conflict: 'Conflict', error: 'Invalid', protected: 'Protected' };
 
 export default function RenamePanel({ folders = [], onChanged }) {
   const [o, setO] = useState({
@@ -72,7 +72,7 @@ export default function RenamePanel({ folders = [], onChanged }) {
       const failed = r.failed?.length || 0;
       setMessage({
         type: failed ? 'error' : 'ok',
-        text: `Renamed ${r.renamed} file(s)${r.skipped ? `, skipped ${r.skipped} with conflicts or invalid names` : ''}${failed ? `, ${failed} failed` : ''}. You can undo it under Recent changes.`,
+        text: `Renamed ${r.renamed} file(s)${r.skipped ? `, skipped ${r.skipped} (conflicts, invalid names or protected folders)` : ''}${failed ? `, ${failed} failed` : ''}. You can undo it under Recent changes.`,
       });
       onChanged?.();
       setO((prev) => ({ ...prev })); // refresh the preview against the new names
@@ -84,7 +84,7 @@ export default function RenamePanel({ folders = [], onChanged }) {
   };
 
   const ready = plan?.counts?.ok || 0;
-  const blocked = (plan?.counts?.conflict || 0) + (plan?.counts?.error || 0);
+  const blocked = (plan?.counts?.conflict || 0) + (plan?.counts?.error || 0) + (plan?.counts?.protected || 0);
 
   return (
     <section className="sort-panel dashboard-card rename-panel" aria-labelledby="rename-title">

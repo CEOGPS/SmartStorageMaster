@@ -51,7 +51,7 @@ export default function SortPanel({ folders: folderList, onChanged }) {
     const result = await run(() => previewSort(opts));
     if (result) {
       setPlan(result);
-      if (result.total === 0) setMessage({ type: 'ok', text: 'Nothing to sort: files are already in place.' });
+      if (result.total === 0) setMessage({ type: 'ok', text: result.protected ? `Nothing to sort: ${result.protected} file(s) are in protected folders and stay where they are.` : 'Nothing to sort: files are already in place.' });
     }
   };
 
@@ -140,6 +140,9 @@ export default function SortPanel({ folders: folderList, onChanged }) {
             ))}
           </ul>
           {plan.total > 8 && <p className="sort-more">…and {plan.total - 8} more. Nothing has moved yet.</p>}
+          {plan.protected > 0 && (
+            <p className="sort-more">{plan.protected} file(s) in protected folders are left where they are.</p>
+          )}
           {plan.missing_on_disk > 0 && (
             <p className="sort-more">{plan.missing_on_disk} indexed file(s) no longer exist on disk and were skipped. Re-scan to refresh.</p>
           )}

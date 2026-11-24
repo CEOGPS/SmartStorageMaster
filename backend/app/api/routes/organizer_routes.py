@@ -18,6 +18,7 @@ from ...api.schemas import (
 )
 from ...services.rename_service import RenameService, RenameError
 from ...services.sort_service import SortService
+from ...services.protection_service import ProtectedPathError
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,9 @@ def create_folder(
 
     except HTTPException:
         raise
+    except ProtectedPathError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     except Exception as e:
         logger.error(f"Failed to create folder: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -148,6 +152,9 @@ def move_files(
         logger.info(f"Moved {result['moved']}/{result['total']} files to {request.destination}")
         return {'success': True, 'data': result}
 
+    except ProtectedPathError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     except Exception as e:
         logger.error(f"Failed to move files: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -174,6 +181,9 @@ def delete_empty_folders(
 
         logger.info(f"Removed {result['count']} empty folders under {request.root}")
         return {'success': True, 'data': result}
+
+    except ProtectedPathError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
     except Exception as e:
         logger.error(f"Failed to delete empty folders: {e}", exc_info=True)
@@ -216,6 +226,8 @@ def _run_sort(request: OrganizerSortRequest, db: Session, apply: bool) -> dict:
         if not apply:
             result = {k: v for k, v in result.items() if k != 'moves'}
         return {'success': True, 'data': result}
+    except ProtectedPathError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -243,6 +255,8 @@ def _run_rename(request: OrganizerRenameRequest, db: Session, apply: bool) -> di
         if not apply:
             result = {k: v for k, v in result.items() if k != 'items'}
         return {'success': True, 'data': result}
+    except ProtectedPathError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except RenameError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

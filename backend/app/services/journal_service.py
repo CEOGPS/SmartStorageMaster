@@ -13,6 +13,7 @@ import shutil
 from sqlalchemy.orm import Session
 
 from ..db.models import File, Operation, OperationItem
+from .protection_service import ProtectionService
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,15 @@ class JournalService:
             raise ValueError("Operation was already undone")
 
         restored, skipped = 0, []
+        protection = ProtectionService(self.db)
         for item in reversed(op.items):
             if item.undone:
                 continue
             src, dst = Path(item.src_path), Path(item.dst_path)
+            reason = protection.blocked_reason(src) or protection.blocked_reason(dst)
+            if reason:
+                skipped.append({'path': item.dst_path, 'reason': reason})
+                continue
             if not dst.exists():
                 skipped.append({'path': item.dst_path, 'reason': 'file no longer at destination'})
                 continue

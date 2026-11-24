@@ -24,11 +24,12 @@
 .rename-table td:nth-child(1), .rename-table td:nth-child(2) { width: 40%; }
 .rename-table td small { display: block; color: var(--muted); font-size: 12px; white-space: normal; }
 .rename-table tr.is-ok td:nth-child(2) { color: var(--positive); }
-.rename-table tr.is-conflict td:nth-child(2), .rename-table tr.is-error td:nth-child(2) { color: var(--danger); text-decoration: line-through; }
+.rename-table tr.is-conflict td:nth-child(2), .rename-table tr.is-error td:nth-child(2), .rename-table tr.is-protected td:nth-child(2) { color: var(--danger); text-decoration: line-through; }
 .rename-table tr.is-unchanged td { color: var(--muted); }
 .rename-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid currentColor; }
 .rename-badge.is-ok { color: var(--positive); }
 .rename-badge.is-unchanged { color: var(--muted); }
 .rename-badge.is-conflict { color: var(--warning); }
 .rename-badge.is-error { color: var(--danger); }
+.rename-badge.is-protected { color: var(--link); }
 @media (max-width: 600px) { .rename-table td small { display: none; } }

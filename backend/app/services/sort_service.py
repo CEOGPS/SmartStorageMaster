@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from ..db.models import File
 from .journal_service import JournalService, retarget_file_record
 from .organizer_service import _categorize
+from .protection_service import ProtectionService
 from .scan_service import normalize_scan_path
 
 logger = logging.getLogger(__name__)
@@ -70,12 +71,19 @@ class SortService:
         if not src_root.is_dir():
             raise ValueError(f"Source is not a directory: {src_root}")
         dest_root = normalize_scan_path(destination) if destination else src_root
+        protection = ProtectionService(self.db)
+        protection.require_allowed(src_root, 'The folder to sort')
+        protection.require_allowed(dest_root, 'The destination')
 
         taken = set()
         moves: List[Dict] = []
         skipped = 0
+        protected = 0
         for rec in self._candidates(src_root, recursive):
             src = Path(rec.path)
+            if protection.blocked_reason(src):
+                protected += 1
+                continue
             if not src.exists():
                 skipped += 1
                 continue
@@ -94,7 +102,7 @@ class SortService:
         for m in moves:
             folders[m['folder']] = folders.get(m['folder'], 0) + 1
         return {
-            'mode': mode, 'total': len(moves), 'missing_on_disk': skipped,
+            'mode': mode, 'total': len(moves), 'missing_on_disk': skipped, 'protected': protected,
             'folders': folders, 'moves': moves,
             'preview': moves[:PREVIEW_LIMIT], 'truncated': len(moves) > PREVIEW_LIMIT,
         }

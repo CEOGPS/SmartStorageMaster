@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..db.models import File
 from .cleanup_service import CleanupService
 from .journal_service import JournalService, retarget_file_record
+from .protection_service import ProtectionService
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,7 @@ class OrganizerService:
         Returns:
             Result dictionary
         """
+        ProtectionService(self.db).require_allowed(path, 'This location')
         try:
             target = Path(path)
             target.mkdir(parents=True, exist_ok=True)
@@ -181,17 +183,13 @@ class OrganizerService:
         dest_folder = Path(destination)
         moved = 0
         failed = 0
+        blocked: List[Dict] = []
+        protection = ProtectionService(self.db)
+        protection.require_allowed(dest_folder, 'The destination folder')
 
-        if not dest_folder.exists():
-            if create_if_missing:
-                try:
-                    dest_folder.mkdir(parents=True, exist_ok=True)
-                except Exception as e:
-                    logger.error(f"Failed to create destination {destination}: {e}")
-                    return {'moved': 0, 'failed': len(file_ids), 'total': len(file_ids)}
-            else:
-                logger.warning(f"Destination does not exist and create_if_missing=False: {destination}")
-                return {'moved': 0, 'failed': len(file_ids), 'total': len(file_ids)}
+        if not dest_folder.exists() and not create_if_missing:
+            logger.warning(f"Destination does not exist and create_if_missing=False: {destination}")
+            return {'moved': 0, 'failed': len(file_ids), 'total': len(file_ids), 'blocked': [], 'operation_id': None}
 
         journal = JournalService(self.db)
         op = journal.begin('move', f'Move {len(file_ids)} file(s) to {destination}')
@@ -205,6 +203,11 @@ class OrganizerService:
 
             try:
                 source_path = Path(file_record.path)
+                reason = protection.blocked_reason(source_path)
+                if reason:
+                    blocked.append({'path': str(source_path), 'reason': reason})
+                    failed += 1
+                    continue
                 if not source_path.exists():
                     logger.warning(f"File not found on disk: {source_path}")
                     failed += 1
@@ -218,6 +221,7 @@ class OrganizerService:
                         dest_path = dest_folder / f"{stem} ({counter}){suffix}"
                         counter += 1
 
+                dest_folder.mkdir(parents=True, exist_ok=True)  # only when something actually moves
                 shutil.move(str(source_path), str(dest_path))
                 try:
                     journal.record(op, source_path, dest_path, file_id)
@@ -237,7 +241,7 @@ class OrganizerService:
         journal.discard_if_empty(op)
         self.db.commit()
 
-        return {'moved': moved, 'failed': failed, 'total': len(file_ids),
+        return {'moved': moved, 'failed': failed, 'total': len(file_ids), 'blocked': blocked,
                 'operation_id': op.id if op.items else None}
 
     def delete_empty_folders(self, root: str) -> Dict:
@@ -254,9 +258,13 @@ class OrganizerService:
 
         removed = []
         root_resolved = str(Path(root).resolve())
+        protection = ProtectionService(self.db)
+        protection.require_allowed(root, 'This folder')
 
         for dirpath, dirnames, filenames in os.walk(root, topdown=False):
             if str(Path(dirpath).resolve()) == root_resolved:
+                continue
+            if protection.blocked_reason(dirpath):
                 continue
 
             try:
@@ -293,4 +301,5 @@ class OrganizerService:
             'deleted': delete_result['deleted'],
             'failed': backup_result['failed'] + delete_result['failed'],
             'total': len(file_ids),
+            'blocked': delete_result.get('blocked', []),
         }

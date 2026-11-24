@@ -320,9 +320,13 @@ def _summarize_result(name: str, result: dict) -> str:
     if name == "get_backups":
         return f"get_backups: {result.get('count', 0)} backup(s) on record"
     if name == "backup_files":
-        return f"backup_files: backed up {result.get('backed_up', 0)}/{result.get('total', 0)}"
+        blocked = len(result.get('blocked', []))
+        return (f"backup_files: backed up {result.get('backed_up', 0)}/{result.get('total', 0)}"
+                + (f" ({blocked} protected and skipped)" if blocked else ""))
     if name == "delete_files":
-        return f"delete_files: deleted {result.get('deleted', 0)}/{result.get('total', 0)}"
+        blocked = len(result.get('blocked', []))
+        return (f"delete_files: deleted {result.get('deleted', 0)}/{result.get('total', 0)}"
+                + (f" ({blocked} protected and left untouched)" if blocked else ""))
     return f"{name}: done"
 
 

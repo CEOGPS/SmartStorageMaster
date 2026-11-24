@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './Settings.css';
 import { getUsageThresholds, updateUsageThresholds } from '../services/api';
 import { setTheme, getTheme } from '../utils/theme';
+import ProtectedFolders from '../components/ProtectedFolders/ProtectedFolders';
 
 /**
  * Settings Page
@@ -200,6 +201,8 @@ export default function Settings() {
             </div>
           </div>
         </div>
+
+        <ProtectedFolders />
 
         <div className="settings-actions">
           <button className="btn-save" onClick={handleSave}>

@@ -500,3 +500,12 @@ export async function undoOperation(operationId) {
 // Bulk rename
 export const previewRename = (opts) => postJson('/organizer/rename/preview', opts);
 export const applyRename = (opts) => postJson('/organizer/rename/apply', opts);
+
+// Protected folders
+export async function getProtectedFolders() {
+  return unwrap(await request('/protection'));
+}
+export const addProtectedFolder = (path, note) => postJson('/protection', { path, note: note || null });
+export async function removeProtectedFolder(id) {
+  return unwrap(await request(`/protection/${id}`, { method: 'DELETE' }));
+}

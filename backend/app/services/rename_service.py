@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import File
 from .journal_service import JournalService, retarget_file_record
+from .protection_service import ProtectionService
 from .scan_service import normalize_scan_path
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ class RenameService:
             raise RenameError(f'Find is not a valid regular expression: {e}')
 
         rows = self._select(file_ids, folder, recursive, match)
+        protection = ProtectionService(self.db)
         keys = {'name': lambda r: r.name.lower(),
                 'modified': lambda r: (r.modified_at or datetime.min, r.name.lower()),
                 'size': lambda r: (r.size or 0, r.name.lower())}
@@ -155,7 +157,10 @@ class RenameService:
                     'status': 'ok', 'reason': None}
             reason = validate_name(new_name)
             key = str(dst).lower()
-            if reason:
+            protected_reason = protection.blocked_reason(src)
+            if protected_reason:
+                item.update(status='protected', reason=protected_reason)
+            elif reason:
                 item.update(status='error', reason=f'New name {reason}')
             elif new_name == src.name:
                 item.update(status='unchanged')
@@ -165,7 +170,7 @@ class RenameService:
                 item.update(status='conflict', reason='A file with this name already exists')
             if item['status'] in ('ok', 'unchanged'):
                 targets[key] = src.name
-            if not src.exists():
+            if item['status'] != 'protected' and not src.exists():
                 item.update(status='error', reason='File no longer exists on disk (re-scan)')
             items.append(item)
 
@@ -179,7 +184,8 @@ class RenameService:
             if dst_key in batch_paths and dst_key not in moving and dst_key != i['path'].lower():
                 i.update(status='conflict', reason='Another file in this batch keeps that name')
 
-        counts = {s: sum(1 for i in items if i['status'] == s) for s in ('ok', 'unchanged', 'conflict', 'error')}
+        counts = {s: sum(1 for i in items if i['status'] == s)
+                  for s in ('ok', 'unchanged', 'conflict', 'error', 'protected')}
         return {'total': len(items), 'counts': counts, 'items': items,
                 'preview': items[:PREVIEW_LIMIT], 'truncated': len(items) > PREVIEW_LIMIT}
 
@@ -239,5 +245,5 @@ class RenameService:
 
         journal.discard_if_empty(op)
         self.db.commit()
-        return {'renamed': renamed, 'failed': failed, 'skipped': plan['counts']['conflict'] + plan['counts']['error'],
+        return {'renamed': renamed, 'failed': failed, 'skipped': plan['counts']['conflict'] + plan['counts']['error'] + plan['counts']['protected'],
                 'operation_id': op.id if renamed else None}

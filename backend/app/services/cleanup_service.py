@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from ..core.cleanup import CleanupManager
 from ..db.models import File, BackupFile
 
+from .protection_service import ProtectionService
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,12 +44,19 @@ class CleanupService:
         
         backed_up = 0
         failed = 0
-        
+        blocked = []
+        protection = ProtectionService(self.db)
+
         for file_id in file_ids:
             file = self.db.query(File).filter_by(id=file_id).first()
             if not file:
                 continue
-            
+
+            reason = protection.blocked_reason(file.path)
+            if reason:
+                blocked.append({'path': file.path, 'reason': reason})
+                continue
+
             try:
                 file_path = Path(file.path)
                 if not file_path.exists():
@@ -81,6 +90,7 @@ class CleanupService:
             'backed_up': backed_up,
             'failed': failed,
             'total': len(file_ids),
+            'blocked': blocked,
         }
     
     def delete_files(self, file_ids: List[str]) -> Dict:
@@ -97,12 +107,19 @@ class CleanupService:
         
         deleted = 0
         failed = 0
-        
+        blocked = []
+        protection = ProtectionService(self.db)
+
         for file_id in file_ids:
             file = self.db.query(File).filter_by(id=file_id).first()
             if not file:
                 continue
-            
+
+            reason = protection.blocked_reason(file.path)
+            if reason:
+                blocked.append({'path': file.path, 'reason': reason})
+                continue
+
             try:
                 file_path = Path(file.path)
                 if file_path.exists():
@@ -118,6 +135,7 @@ class CleanupService:
             'deleted': deleted,
             'failed': failed,
             'total': len(file_ids),
+            'blocked': blocked,
         }
     
     def get_backups(self) -> List[Dict]:

@@ -195,9 +195,10 @@ export default function FileOrganizer() {
     if (selected.size === 0 || !destination) return;
     try {
       const result = await moveFiles(Array.from(selected), destination, true);
+      const prot = result.blocked?.length || 0;
       showBanner(
         result.failed > 0 ? 'error' : 'success',
-        `Moved ${result.moved}/${result.total} file(s)${result.failed ? `, ${result.failed} failed` : ''}`
+        `Moved ${result.moved}/${result.total} file(s)${result.failed ? `, ${result.failed} failed` : ''}${prot ? ` (${prot} protected, left untouched)` : ''}`
       );
       setSelected(new Set());
       await Promise.all([refreshFiles(), refreshFolders()]);
@@ -213,9 +214,10 @@ export default function FileOrganizer() {
     }
     try {
       const result = await deleteOrganizerFiles(Array.from(selected));
+      const prot = result.blocked?.length || 0;
       showBanner(
-        result.failed > 0 ? 'error' : 'success',
-        `Deleted ${result.deleted}/${result.total} file(s)${result.failed ? `, ${result.failed} failed` : ''}`
+        result.failed > 0 || prot > 0 ? 'error' : 'success',
+        `Deleted ${result.deleted}/${result.total} file(s)${result.failed ? `, ${result.failed} failed` : ''}${prot ? ` (${prot} protected, left untouched)` : ''}`
       );
       setSelected(new Set());
       await Promise.all([refreshFiles(), refreshFolders()]);

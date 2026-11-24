@@ -179,3 +179,13 @@ class OperationItem(Base):
     undone = Column(Boolean, nullable=False, default=False)
 
     operation = relationship("Operation", back_populates="items")
+
+
+class ProtectedPath(Base):
+    """A folder (or file) the user has marked as off-limits for moves, renames, sorts and deletes"""
+    __tablename__ = "protected_paths"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    path = Column(String(2048), nullable=False, unique=True)
+    note = Column(String(256), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

@@ -174,6 +174,9 @@ export async function getDuplicates(filterType = 'all') {
     if (!matches) return groups;
     return groups.filter((g) => g.files.some((f) => matches(f.mimeType)));
   } catch (error) {
+    // Before the first scan completes there is simply nothing to show; that is
+    // an empty state, not a failure.
+    if (/no completed scans/i.test(error?.message || '')) return [];
     console.error('getDuplicates error:', error);
     throw error;
   }

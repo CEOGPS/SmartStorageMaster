@@ -36,22 +36,22 @@ function VideoThumb({ fileId, name }) {
 }
 
 const FILE_TYPES = [
-  { key: 'all', label: 'All', icon: 'ð' },
-  { key: 'image', label: 'Images', icon: 'ð¼ï¸' },
-  { key: 'document', label: 'Documents', icon: 'ð' },
-  { key: 'video', label: 'Video', icon: 'ð¬' },
-  { key: 'audio', label: 'Audio', icon: 'ðµ' },
-  { key: 'archive', label: 'Archives', icon: 'ðï¸' },
-  { key: 'other', label: 'Other', icon: 'ð¦' },
+  { key: 'all', label: 'All', icon: '🗂️' },
+  { key: 'image', label: 'Images', icon: '🖼️' },
+  { key: 'document', label: 'Documents', icon: '📝' },
+  { key: 'video', label: 'Video', icon: '🎬' },
+  { key: 'audio', label: 'Audio', icon: '🎵' },
+  { key: 'archive', label: 'Archives', icon: '🗜️' },
+  { key: 'other', label: 'Other', icon: '📦' },
 ];
 
 const TYPE_ICONS = {
-  image: 'ð¼ï¸',
-  document: 'ð',
-  video: 'ð¬',
-  audio: 'ðµ',
-  archive: 'ðï¸',
-  other: 'ð¦',
+  image: '🖼️',
+  document: '📝',
+  video: '🎬',
+  audio: '🎵',
+  archive: '🗜️',
+  other: '📦',
 };
 
 function guessType(mimeType, name) {
@@ -250,7 +250,7 @@ export default function FileOrganizer() {
       {banner && (
         <div className={`organizer-banner ${banner.type}`}>
           <span>{banner.message}</span>
-          <button className="banner-dismiss" onClick={() => setBanner(null)}>Ã</button>
+          <button className="banner-dismiss" onClick={() => setBanner(null)}>×</button>
         </div>
       )}
 
@@ -275,11 +275,11 @@ export default function FileOrganizer() {
               className={`folder-item${activeFolder === '' ? ' active' : ''}`}
               onClick={() => setActiveFolder('')}
             >
-              <span className="folder-icon">ðï¸</span>
+              <span className="folder-icon">🗂️</span>
               <span className="folder-name">All Folders</span>
             </button>
             {folders.length === 0 && (
-              <div className="folder-empty">No indexed folders yet â run a scan first.</div>
+              <div className="folder-empty">No indexed folders yet — run a scan first.</div>
             )}
             {folders.map((f) => (
               <button
@@ -288,7 +288,7 @@ export default function FileOrganizer() {
                 onClick={() => setActiveFolder(f)}
                 title={f}
               >
-                <span className="folder-icon">ð</span>
+                <span className="folder-icon">📁</span>
                 <span className="folder-name truncate">{f}</span>
               </button>
             ))}
@@ -314,14 +314,14 @@ export default function FileOrganizer() {
                 onClick={() => setViewMode('list')}
                 title="List view"
               >
-                â°
+                ☰
               </button>
               <button
                 className={`view-btn${viewMode === 'grid' ? ' active' : ''}`}
                 onClick={() => setViewMode('grid')}
                 title="Thumbnail grid"
               >
-                â
+                ⊞
               </button>
             </div>
           </div>
@@ -331,7 +331,7 @@ export default function FileOrganizer() {
               <div className="organizer-loading">Loading files...</div>
             ) : files.length === 0 ? (
               <div className="organizer-empty">
-                <span className="empty-icon">ðï¸</span>
+                <span className="empty-icon">🗃️</span>
                 <p>No files match this filter.</p>
                 <p className="empty-hint">Try a different folder or file type, or run a scan from the Scan page.</p>
               </div>
@@ -353,7 +353,7 @@ export default function FileOrganizer() {
                         ) : type === 'video' ? (
                           <VideoThumb fileId={f.id} name={f.name} />
                         ) : (
-                          <span className="thumb-fallback-icon">{TYPE_ICONS[type] || 'ð'}</span>
+                          <span className="thumb-fallback-icon">{TYPE_ICONS[type] || '📄'}</span>
                         )}
                         <input
                           type="checkbox"
@@ -392,7 +392,7 @@ export default function FileOrganizer() {
                           />
                         </td>
                         <td className="file-name-cell">
-                          <span className="file-type-icon">{TYPE_ICONS[type] || 'ð'}</span>
+                          <span className="file-type-icon">{TYPE_ICONS[type] || '📄'}</span>
                           <span className="file-name-text truncate" title={f.name}>{f.name}</span>
                         </td>
                         <td className="file-path truncate" title={f.path}>{f.path}</td>
@@ -407,14 +407,14 @@ export default function FileOrganizer() {
 
           <div className="organizer-pagination">
             <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-              â Prev
+              ← Prev
             </button>
             <span>Page {page} of {pageCount}</span>
             <button
               disabled={offset + PAGE_SIZE >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
             >
-              Next â
+              Next →
             </button>
           </div>
         </section>
@@ -433,7 +433,7 @@ export default function FileOrganizer() {
                 className="destination-input"
               />
               <button className="action-btn" onClick={handleBrowseDestination} title="Browse...">
-                ð
+                📂
               </button>
             </div>
           </div>
@@ -463,7 +463,7 @@ export default function FileOrganizer() {
                 onClick={() => setDestination(f)}
                 title={f}
               >
-                <span className="folder-icon">ð</span>
+                <span className="folder-icon">📁</span>
                 <span className="folder-name truncate">{f}</span>
               </button>
             ))}
@@ -495,8 +495,8 @@ export default function FileOrganizer() {
             <div className="cleanup-result">
               Removed {cleanupResult.count} empty folder(s)
               {cleanupResult.removed?.length > 0 && (
-                <span className="cleanup-list"> â {cleanupResult.removed.slice(0, 3).join(', ')}
-                  {cleanupResult.removed.length > 3 ? 'â¦' : ''}</span>
+                <span className="cleanup-list"> — {cleanupResult.removed.slice(0, 3).join(', ')}
+                  {cleanupResult.removed.length > 3 ? '…' : ''}</span>
               )}
             </div>
           )}

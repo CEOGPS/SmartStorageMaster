@@ -21,6 +21,7 @@ class File(Base):
     size = Column(Integer, nullable=False, index=True)
     mime_type = Column(String(128), nullable=True)
     hash_md5 = Column(String(32), nullable=True, index=True)
+    hash_blake3 = Column(String(64), nullable=True, index=True)  # content hash used for exact duplicates
     hash_sha256 = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     modified_at = Column(DateTime, nullable=False, default=datetime.utcnow)

@@ -40,6 +40,7 @@ class FileMetadataResponse(BaseModel):
     size: int
     mime_type: Optional[str]
     hash_md5: Optional[str]
+    hash_blake3: Optional[str] = None
     hash_sha256: Optional[str]
     created_at: datetime
     modified_at: datetime

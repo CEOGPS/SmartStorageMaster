@@ -103,12 +103,37 @@ def get_engine():
     return _engine
 
 
+# Columns added after the first release. create_all() only creates missing
+# tables, so existing databases get these added in place (data is preserved).
+_ADDED_COLUMNS = [
+    ("files", "hash_blake3", "VARCHAR(64)"),
+]
+
+
+def add_missing_columns(engine):
+    """Add any column from _ADDED_COLUMNS that an older database lacks"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table, column, ddl in _ADDED_COLUMNS:
+            if table not in tables:
+                continue
+            if column in {c["name"] for c in insp.get_columns(table)}:
+                continue
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_{column} ON {table} ({column})"))
+            logger.info(f"Added column {table}.{column} to existing database")
+
+
 def create_all_tables():
-    """Create all database tables"""
+    """Create all database tables (and upgrade older databases in place)"""
     from .models import Base
-    
+
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
+    add_missing_columns(engine)
     logger.info("Database tables created successfully")
 
 

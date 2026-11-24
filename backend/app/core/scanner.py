@@ -10,6 +10,15 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+try:  # BLAKE3 is the content hash used for duplicate detection
+    import blake3 as _blake3
+except ImportError:  # pragma: no cover - exercised by tests via monkeypatch
+    _blake3 = None
+    logger.warning("blake3 is not installed: falling back to MD5 for duplicate detection (pip install blake3)")
+
+_HASH_CHUNK = 1024 * 1024  # 1 MiB reads; 8 KB made hashing syscall-bound
+
+
 # System folders and files to exclude
 EXCLUDED_DIRS = {
     '.git', '.svn', '.hg',  # Version control
@@ -54,6 +63,7 @@ class FileMetadata:
         self.created_at = created_at
         self.modified_at = modified_at
         self.hash_md5: Optional[str] = None
+        self.hash_blake3: Optional[str] = None
         self.hash_sha256: Optional[str] = None
     
     def __repr__(self):
@@ -75,7 +85,7 @@ class FileScanner:
         Args:
             include_hidden: Include hidden files (default: False)
             batch_size: Number of files to batch before yielding
-            compute_hashes: Compute MD5/SHA256 hashes (default: True)
+            compute_hashes: Compute BLAKE3 content hashes (default: True)
         """
         self.include_hidden = include_hidden
         self.batch_size = batch_size
@@ -191,9 +201,13 @@ class FileScanner:
             )
             
             # Compute hashes if requested
+            # One read per file. BLAKE3 (multi-threaded, memory-mapped) when
+            # available; otherwise MD5 so duplicate detection keeps working.
             if self.compute_hashes:
-                metadata.hash_md5 = self._compute_hash(file_path, 'md5')
-                metadata.hash_sha256 = self._compute_hash(file_path, 'sha256')
+                if _blake3 is not None:
+                    metadata.hash_blake3 = self._blake3_hash(file_path)
+                else:
+                    metadata.hash_md5 = self._compute_hash(file_path, 'md5')
             
             return metadata
         
@@ -201,6 +215,25 @@ class FileScanner:
             logger.warning(f"Cannot read file {file_path}: {e}")
             return None
     
+    @staticmethod
+    def _blake3_hash(file_path: Path) -> Optional[str]:
+        """BLAKE3 hex digest of a file, or None if it cannot be read"""
+        try:
+            hasher = _blake3.blake3(max_threads=_blake3.blake3.AUTO)
+            try:
+                hasher.update_mmap(str(file_path))
+            except (ValueError, OSError):
+                # Empty files, special files and some network shares cannot be
+                # memory-mapped: fall back to plain chunked reads.
+                hasher = _blake3.blake3()
+                with open(file_path, 'rb') as f:
+                    for chunk in iter(lambda: f.read(_HASH_CHUNK), b''):
+                        hasher.update(chunk)
+            return hasher.hexdigest()
+        except (PermissionError, OSError) as e:
+            logger.warning(f"Cannot compute hash for {file_path}: {e}")
+            return None
+
     def _compute_hash(self, file_path: Path, algorithm: str) -> Optional[str]:
         """
         Compute file hash
@@ -215,7 +248,7 @@ class FileScanner:
         try:
             hash_func = hashlib.new(algorithm)
             with open(file_path, 'rb') as f:
-                for chunk in iter(lambda: f.read(8192), b''):
+                for chunk in iter(lambda: f.read(_HASH_CHUNK), b''):
                     hash_func.update(chunk)
             return hash_func.hexdigest()
         

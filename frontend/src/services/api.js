@@ -496,3 +496,7 @@ export async function listJournal(limit = 20) {
 export async function undoOperation(operationId) {
   return unwrap(await request(`/journal/${operationId}/undo`, { method: 'POST' }));
 }
+
+// Bulk rename
+export const previewRename = (opts) => postJson('/organizer/rename/preview', opts);
+export const applyRename = (opts) => postJson('/organizer/rename/apply', opts);

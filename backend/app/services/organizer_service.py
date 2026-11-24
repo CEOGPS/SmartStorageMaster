@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import File
 from .cleanup_service import CleanupService
-from .journal_service import JournalService
+from .journal_service import JournalService, retarget_file_record
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,7 @@ class OrganizerService:
 
         journal = JournalService(self.db)
         op = journal.begin('move', f'Move {len(file_ids)} file(s) to {destination}')
+        self.db.commit()
 
         for file_id in file_ids:
             file_record = self.db.query(File).filter_by(id=file_id).first()
@@ -218,10 +219,15 @@ class OrganizerService:
                         counter += 1
 
                 shutil.move(str(source_path), str(dest_path))
-                journal.record(op, source_path, dest_path, file_id)
-
-                file_record.path = str(dest_path)
-                file_record.name = dest_path.name
+                try:
+                    journal.record(op, source_path, dest_path, file_id)
+                    retarget_file_record(self.db, file_id, dest_path)
+                    self.db.commit()
+                except Exception:
+                    # Keep disk and index consistent: put the file back
+                    self.db.rollback()
+                    shutil.move(str(dest_path), str(source_path))
+                    raise
                 moved += 1
 
             except Exception as e:

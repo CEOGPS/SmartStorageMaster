@@ -16,7 +16,7 @@ import shutil
 from sqlalchemy.orm import Session
 
 from ..db.models import File
-from .journal_service import JournalService
+from .journal_service import JournalService, retarget_file_record
 from .organizer_service import _categorize
 from .scan_service import normalize_scan_path
 
@@ -104,6 +104,7 @@ class SortService:
         plan = self.plan(source, mode, granularity, recursive, destination)
         journal = JournalService(self.db)
         op = journal.begin('sort', f"Sort by {mode}: {plan['total']} file(s) in {source}")
+        self.db.commit()  # the operation exists before any file moves
         moved, failed = 0, []
         for m in plan['moves']:
             src, dst = Path(m['src']), Path(m['dst'])
@@ -115,11 +116,20 @@ class SortService:
             except Exception as e:
                 failed.append({'path': m['src'], 'reason': str(e)})
                 continue
-            journal.record(op, src, dst, m['file_id'])
-            rec = self.db.query(File).filter_by(id=m['file_id']).first()
-            if rec is not None:
-                rec.path, rec.name = str(dst), dst.name
-            moved += 1
+            try:
+                # Save each move on its own so an undo record always exists for
+                # every file that actually moved.
+                journal.record(op, src, dst, m['file_id'])
+                retarget_file_record(self.db, m['file_id'], dst)
+                self.db.commit()
+                moved += 1
+            except Exception as e:
+                self.db.rollback()
+                try:
+                    shutil.move(str(dst), str(src))  # keep disk and index consistent
+                except Exception:
+                    logger.error(f"Could not roll back move of {src}", exc_info=True)
+                failed.append({'path': m['src'], 'reason': f'index update failed: {e}'})
         journal.discard_if_empty(op)
         self.db.commit()
         return {'moved': moved, 'failed': failed, 'operation_id': op.id if moved else None,

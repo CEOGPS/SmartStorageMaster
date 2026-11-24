@@ -7,6 +7,7 @@ const Cleanup = lazy(() => import('./pages/Cleanup'));
 const Organizer = lazy(() => import('./pages/Organizer'));
 const Usage = lazy(() => import('./pages/Usage'));
 const Settings = lazy(() => import('./pages/Settings'));
+import Icon from './components/UI/Icon';
 import DotGridBackground from './components/DotGridBackground/DotGridBackground';
 import AgentChat from './components/AgentChat/AgentChat';
 import './App.css';
@@ -65,7 +66,7 @@ function App() {
       <div className="app-container">
         <nav className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
           <div className="logo">
-            <span className="logo-icon">💾</span>
+            <span className="logo-icon"><Icon name="disk" size={26} /></span>
             <span className="logo-text">Storage<br />Master</span>
             <button
               className="collapse-btn"
@@ -79,37 +80,37 @@ function App() {
           <ul className="nav-menu">
             <li>
               <NavLink to="/" end className={({isActive}) => `nav-link${isActive ? " active" : ""}`}>
-                <span className="icon">📊</span>
+                <span className="icon"><Icon name="dashboard" /></span>
                 <span className="label">Dashboard</span>
               </NavLink>
             </li>
             <li>
               <NavLink to="/scan" className={({isActive}) => `nav-link${isActive ? " active" : ""}`}>
-                <span className="icon">📁</span>
+                <span className="icon"><Icon name="scan" /></span>
                 <span className="label">Scan</span>
               </NavLink>
             </li>
             <li>
               <NavLink to="/duplicates" className={({isActive}) => `nav-link${isActive ? " active" : ""}`}>
-                <span className="icon">🔄</span>
+                <span className="icon"><Icon name="duplicates" /></span>
                 <span className="label">Duplicates</span>
               </NavLink>
             </li>
             <li>
               <NavLink to="/cleanup" className={({isActive}) => `nav-link${isActive ? " active" : ""}`}>
-                <span className="icon">🗑️</span>
+                <span className="icon"><Icon name="cleanup" /></span>
                 <span className="label">Cleanup</span>
               </NavLink>
             </li>
             <li>
               <NavLink to="/organizer" className={({isActive}) => `nav-link${isActive ? " active" : ""}`}>
-                <span className="icon">🗂️</span>
+                <span className="icon"><Icon name="organizer" /></span>
                 <span className="label">Organizer</span>
               </NavLink>
             </li>
             <li>
               <NavLink to="/usage" className={({isActive}) => `nav-link${isActive ? " active" : ""}`}>
-                <span className="icon">📈</span>
+                <span className="icon"><Icon name="usage" /></span>
                 <span className="label">Usage</span>
               </NavLink>
             </li>
@@ -118,7 +119,7 @@ function App() {
           <ul className="nav-footer">
             <li>
               <NavLink to="/settings" className={({isActive}) => `nav-link${isActive ? " active" : ""}`}>
-                <span className="icon">⚙️</span>
+                <span className="icon"><Icon name="settings" /></span>
                 <span className="label">Settings</span>
               </NavLink>
             </li>

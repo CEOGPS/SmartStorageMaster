@@ -17,6 +17,25 @@ from ..db.models import File, Operation, OperationItem
 logger = logging.getLogger(__name__)
 
 
+def retarget_file_record(db: Session, file_id: Optional[str], new_path: Path) -> None:
+    """
+    Point an indexed file at its new path.
+
+    Callers guarantee nothing existed on disk at ``new_path`` (the move/undo only
+    proceeds into a free spot), so any other index row at that path is stale
+    (e.g. left by an earlier scan) and is dropped to keep files.path unique.
+    """
+    if not file_id:
+        return
+    rec = db.query(File).filter_by(id=file_id).first()
+    if rec is None:
+        return
+    for stale in db.query(File).filter(File.path == str(new_path), File.id != file_id).all():
+        db.delete(stale)
+    db.flush()
+    rec.path, rec.name = str(new_path), new_path.name
+
+
 class JournalService:
     def __init__(self, db: Session):
         self.db = db
@@ -70,10 +89,7 @@ class JournalService:
                 continue
             item.undone = True
             restored += 1
-            if item.file_id:
-                rec = self.db.query(File).filter_by(id=item.file_id).first()
-                if rec is not None:
-                    rec.path, rec.name = str(src), src.name
+            retarget_file_record(self.db, item.file_id, src)
 
         if not skipped:
             op.undone_at = datetime.utcnow()

@@ -75,3 +75,21 @@ def test_rerun_is_idempotent_and_bad_mode_rejected(db, tmp_path):
     assert svc.plan(str(tmp_path), "extension", recursive=True)["total"] == 0
     with pytest.raises(ValueError):
         svc.plan(str(tmp_path), "bogus")
+
+
+def test_stale_index_row_at_destination_does_not_break_sort_or_lose_undo(db, tmp_path):
+    """Regression: a leftover index row at the destination path used to raise
+    UNIQUE(files.path) after the file had already moved, losing the undo record."""
+    a = _add(db, tmp_path, "a.jpg")
+    scan = db.query(ScanSession).first()
+    db.add(File(path=str(tmp_path / "jpg" / "a.jpg"), name="a.jpg", size=1, scan_id=scan.id))
+    db.commit()  # stale row: nothing exists on disk there
+
+    result = SortService(db).apply(str(tmp_path), "extension")
+    assert result["moved"] == 1 and not result["failed"] and result["operation_id"]
+    assert (tmp_path / "jpg" / "a.jpg").exists()
+    assert db.query(File).count() == 1
+
+    JournalService(db).undo(result["operation_id"])
+    assert a.exists()
+    assert db.query(File).one().path == str(a)

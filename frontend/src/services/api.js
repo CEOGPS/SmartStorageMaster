@@ -471,3 +471,25 @@ export function disconnectWebSocket(ws) {
     ws.close();
   }
 }
+
+// Auto-sort + undo journal
+async function postJson(path, body) {
+  return unwrap(
+    await request(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  );
+}
+
+export const previewSort = (opts) => postJson('/organizer/sort/preview', opts);
+export const applySort = (opts) => postJson('/organizer/sort/apply', opts);
+
+export async function listJournal(limit = 20) {
+  return unwrap(await request(`/journal?limit=${limit}`));
+}
+
+export async function undoOperation(operationId) {
+  return unwrap(await request(`/journal/${operationId}/undo`, { method: 'POST' }));
+}

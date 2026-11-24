@@ -1,4 +1,5 @@
 import React from 'react';
+import SortPanel from '../components/SortPanel/SortPanel';
 import FileOrganizer from '../components/FileOrganizer/FileOrganizer';
 import './Organizer.css';
 
@@ -14,6 +15,7 @@ export default function Organizer() {
         <p className="description">
           Browse your indexed files by folder or type, move them into place, and clean up empty folders left behind.
         </p>
+        <SortPanel />
         <FileOrganizer />
       </div>
     </div>

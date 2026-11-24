@@ -52,17 +52,21 @@ class DuplicateService:
         logger.info(f"Detecting exact duplicates for scan {scan_id}")
         self.clear_groups(scan_id, 'exact')
 
-        # Group files by MD5 hash
+        # Group files by content hash: BLAKE3 when present, MD5 for rows scanned
+        # before BLAKE3 was added. The two are never mixed, and file size must
+        # match as well, so a hash can never group files of different lengths.
         hash_groups = {}
         files = self.db.query(File).filter_by(scan_id=scan_id).all()
-        
+
         for file in files:
-            if not file.hash_md5:
+            if file.hash_blake3:
+                key = ('blake3', file.hash_blake3, file.size)
+            elif file.hash_md5:
+                key = ('md5', file.hash_md5, file.size)
+            else:
                 continue
-            
-            if file.hash_md5 not in hash_groups:
-                hash_groups[file.hash_md5] = []
-            hash_groups[file.hash_md5].append(file)
+
+            hash_groups.setdefault(key, []).append(file)
         
         group_ids = []
         

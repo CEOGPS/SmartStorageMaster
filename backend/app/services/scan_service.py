@@ -64,7 +64,7 @@ class ScanService:
 
         Args:
             db_session: SQLAlchemy session
-            compute_hashes: Compute MD5/SHA256 hashes for each file
+            compute_hashes: Compute a BLAKE3 content hash for each file
         """
         self.db = db_session
         self.scanner = FileScanner(compute_hashes=compute_hashes)
@@ -255,6 +255,7 @@ class ScanService:
                 file_record.size = metadata.size
                 file_record.mime_type = metadata.mime_type
                 file_record.hash_md5 = metadata.hash_md5
+                file_record.hash_blake3 = metadata.hash_blake3
                 file_record.hash_sha256 = metadata.hash_sha256
                 file_record.created_at = metadata.created_at
                 file_record.modified_at = metadata.modified_at
@@ -266,11 +267,12 @@ class ScanService:
 
                 # Running count of recoverable space: every repeat of a hash
                 # (only populated when compute_hashes is on) is an extra copy
-                if metadata.hash_md5:
-                    if metadata.hash_md5 in seen_hashes:
+                content_hash = metadata.hash_blake3 or metadata.hash_md5
+                if content_hash:
+                    if content_hash in seen_hashes:
                         potential_savings += metadata.size
                     else:
-                        seen_hashes[metadata.hash_md5] = metadata.size
+                        seen_hashes[content_hash] = metadata.size
 
                 percentage = (
                     min(99, round(total_files / total_estimated * 100))
@@ -428,6 +430,7 @@ class ScanService:
                     'size': f.size,
                     'mime_type': f.mime_type,
                     'hash_md5': f.hash_md5,
+                    'hash_blake3': f.hash_blake3,
                     'hash_sha256': f.hash_sha256,
                     'created_at': f.created_at.isoformat(),
                     'modified_at': f.modified_at.isoformat(),

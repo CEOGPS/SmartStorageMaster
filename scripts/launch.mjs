@@ -112,7 +112,7 @@ async function main() {
   if (!existsSync(path.join(BACKEND, 'run.py'))) fail(`Cannot find backend/run.py. Run this from the project folder (${ROOT}).`);
 
   // 2. First-run installs (skipped when already present)
-  if (run(py.cmd, [...py.pre, '-c', 'import fastapi, uvicorn, sqlalchemy']).status !== 0) {
+  if (run(py.cmd, [...py.pre, '-c', 'import fastapi, uvicorn, sqlalchemy, blake3']).status !== 0) {
     say('Installing backend packages (first run only, this can take a few minutes)...');
     const r = spawnSync(py.cmd, [...py.pre, '-m', 'pip', 'install', '-r', path.join(BACKEND, 'requirements.txt')], { stdio: 'inherit' });
     if (r.status !== 0) fail('Backend packages failed to install. See the output above.');

@@ -181,27 +181,65 @@ class UsageService:
     def batch_update_usage(self, file_paths: List[Path]) -> Dict:
         """
         Batch analyze and store usage for multiple files
-        
+
+        Looks files up 500 at a time and commits once per batch. (It used to do two
+        lookups and a separate commit per file, and every commit is a disk sync, so
+        this step took most of the time of a whole scan.)
+
         Args:
             file_paths: List of file paths to analyze
-        
+
         Returns:
             Dictionary with results {updated: int, failed: int, errors: List}
         """
         results = {"updated": 0, "failed": 0, "errors": []}
-        
-        for file_path in file_paths:
+        chunk_size = 500
+
+        for start in range(0, len(file_paths), chunk_size):
+            paths = [Path(p) for p in file_paths[start:start + chunk_size]]
             try:
-                if self.analyze_and_store_usage(file_path):
-                    results["updated"] += 1
-                else:
-                    results["failed"] += 1
+                rows = {
+                    f.path: f
+                    for f in self.db.query(File).filter(File.path.in_([str(p) for p in paths])).all()
+                }
             except Exception as e:
-                results["failed"] += 1
+                self.db.rollback()
+                results["failed"] += len(paths)
                 results["errors"].append(str(e))
-        
+                continue
+
+            pending = 0
+            for path in paths:
+                row = rows.get(str(path))
+                if row is None:
+                    logger.debug(f"File not found in database: {path}")
+                    results["failed"] += 1
+                    continue
+                try:
+                    metadata = self.analyzer.analyze_file(path)
+                except Exception as e:
+                    results["failed"] += 1
+                    results["errors"].append(str(e))
+                    continue
+                if not metadata:
+                    results["failed"] += 1
+                    continue
+                row.last_accessed = metadata.last_accessed
+                row.usage_category = metadata.usage_category
+                row.days_since_access = metadata.days_since_access
+                row.usage_priority = metadata.usage_priority
+                pending += 1
+
+            try:
+                self.db.commit()
+                results["updated"] += pending
+            except Exception as e:
+                self.db.rollback()
+                results["failed"] += pending
+                results["errors"].append(str(e))
+
         return results
-    
+
     def get_files_by_category(
         self,
         category: str,

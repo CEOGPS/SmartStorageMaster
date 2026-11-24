@@ -8,6 +8,7 @@ import itertools
 import os
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,10 @@ _progress_lock = threading.Lock()
 
 
 LOOKUP_CHUNK = 500
+# Parallel file reads while hashing. Reads are I/O bound and BLAKE3 releases the GIL.
+# Override with SSM_HASH_WORKERS (use 1 for a spinning disk or a network share).
+HASH_WORKERS = max(1, int(os.getenv('SSM_HASH_WORKERS', '4') or 4))
+_MTIME_TOLERANCE_S = 0.002
 _BARE_DRIVE = re.compile(r'^[A-Za-z]:$')
 
 
@@ -67,7 +72,10 @@ class ScanService:
             compute_hashes: Compute a BLAKE3 content hash for each file
         """
         self.db = db_session
-        self.scanner = FileScanner(compute_hashes=compute_hashes)
+        self.compute_hashes = compute_hashes
+        # Hashing is done by this service (after deciding which files need it),
+        # so the scanner itself only collects metadata.
+        self.scanner = FileScanner(compute_hashes=False)
 
     def create_scan(self, start_path: Path) -> str:
         """
@@ -113,7 +121,7 @@ class ScanService:
         """
         start_path = normalize_scan_path(start_path)
         scan_id = self.create_scan(start_path)
-        compute_hashes = self.scanner.compute_hashes
+        compute_hashes = self.compute_hashes
 
         def worker():
             worker_db = get_session()
@@ -145,50 +153,52 @@ class ScanService:
         self.run_scan(scan_id, start_path, recursive, include_hidden)
         return scan_id
 
-    def _count_files_fast(
-        self,
-        start_path: Path,
-        recursive: bool,
-        include_hidden: bool,
-    ) -> int:
+    def _survey(self, start_path: Path, recursive: bool):
         """
-        Fast pre-count of files under start_path, used only to estimate scan
-        progress. Mirrors FileScanner's traversal rules (excluded dirs,
-        excluded extensions, hidden files) but skips metadata/hash
-        extraction so it stays cheap even on large trees.
+        Pre-pass using the scanner's own traversal (stat only, no hashing).
 
-        Returns 0 (instead of raising) on any access error, so callers can
-        safely fall back to an indeterminate progress bar.
+        Returns ``(file_count, {size: how_many_files})``. The count drives the
+        progress bar; the size table lets the scan skip hashing files whose size is
+        unique (they cannot be duplicates of anything in this scan). Any failure is
+        reported to the caller, which then hashes everything.
         """
-        count = 0
-        try:
-            if recursive:
-                for root, dirs, files in os.walk(start_path):
-                    dirs[:] = [
-                        d for d in dirs
-                        if d not in EXCLUDED_DIRS and (include_hidden or not d.startswith('.'))
-                    ]
-                    for name in files:
-                        if not include_hidden and name.startswith('.'):
-                            continue
-                        if Path(name).suffix.lower() in EXCLUDED_EXTENSIONS:
-                            continue
-                        count += 1
+        counts: Dict[int, int] = {}
+        total = 0
+        for size in self.scanner.scan_sizes(start_path, recursive):
+            total += 1
+            counts[size] = counts.get(size, 0) + 1
+        return total, counts
+
+    @staticmethod
+    def _attach_hashes(chunk, paths, found, size_counts, scheme, stats, pool) -> None:
+        """
+        Fill in content hashes for one chunk of scanned files, reading as little as possible:
+
+          reuse   - file unchanged since the last scan (same size and modified time) and
+                    already hashed with the current scheme: copy the stored hash
+          skip    - its size is unique in this scan, so it cannot be a duplicate
+          hash    - everything else, read in parallel
+
+        Hashes of files that changed are never carried over.
+        """
+        to_hash = []
+        for m, path_str in zip(chunk, paths):
+            old = found.get(path_str)
+            stored = None
+            if old is not None and old.size == m.size and old.modified_at is not None \
+                    and abs((old.modified_at - m.modified_at).total_seconds()) <= _MTIME_TOLERANCE_S:
+                stored = old.hash_blake3 if scheme == 'blake3' else old.hash_md5
+            if stored:
+                m.hash_blake3, m.hash_md5 = old.hash_blake3, old.hash_md5
+                stats['reused'] += 1
+            elif size_counts is not None and size_counts.get(m.size, 2) <= 1:
+                stats['skipped_unique'] += 1
             else:
-                with os.scandir(start_path) as entries:
-                    for entry in entries:
-                        if not entry.is_file(follow_symlinks=False):
-                            continue
-                        name = entry.name
-                        if not include_hidden and name.startswith('.'):
-                            continue
-                        if Path(name).suffix.lower() in EXCLUDED_EXTENSIONS:
-                            continue
-                        count += 1
-        except (PermissionError, OSError) as e:
-            logger.warning(f"Pre-count failed for {start_path}: {e}")
-            return 0
-        return count
+                to_hash.append(m)
+        if to_hash:
+            for m, (b3, md5) in zip(to_hash, pool.map(lambda x: FileScanner.content_hashes(x.path), to_hash)):
+                m.hash_blake3, m.hash_md5 = b3, md5
+            stats['hashed'] += len(to_hash)
 
     def run_scan(
         self,
@@ -212,11 +222,13 @@ class ScanService:
             now = datetime.utcnow()
 
             try:
-                total_estimated = self._count_files_fast(start_path, recursive, include_hidden)
+                total_estimated, size_counts = self._survey(start_path, recursive)
             except Exception as e:
-                logger.warning(f"Pre-count failed for scan {scan_id}: {e}")
-                total_estimated = 0
+                logger.warning(f"Pre-scan failed for scan {scan_id}, hashing every file: {e}")
+                total_estimated, size_counts = 0, None
             _set_progress(scan_id, total_estimated=total_estimated)
+            stats = {'hashed': 0, 'reused': 0, 'skipped_unique': 0}
+            scheme = FileScanner.hash_scheme()
 
             total_files = 0
             total_size = 0
@@ -235,15 +247,18 @@ class ScanService:
             def records():
                 # Look up existing rows by exact path, one chunk at a time, so
                 # lookups never depend on how the root path was spelled.
-                for chunk in batches():
-                    self.db.flush()  # sessions use autoflush=False
-                    paths = [str(m.path) for m in chunk]
-                    found = {
-                        f.path: f
-                        for f in self.db.query(File).filter(File.path.in_(paths)).all()
-                    }
-                    for m, path_str in zip(chunk, paths):
-                        yield m, path_str, found.get(path_str)
+                with ThreadPoolExecutor(max_workers=HASH_WORKERS) as pool:
+                    for chunk in batches():
+                        self.db.flush()  # sessions use autoflush=False
+                        paths = [str(m.path) for m in chunk]
+                        found = {
+                            f.path: f
+                            for f in self.db.query(File).filter(File.path.in_(paths)).all()
+                        }
+                        if self.compute_hashes:
+                            self._attach_hashes(chunk, paths, found, size_counts, scheme, stats, pool)
+                        for m, path_str in zip(chunk, paths):
+                            yield m, path_str, found.get(path_str)
 
             for metadata, path_str, file_record in records():
                 if file_record is None:
@@ -300,8 +315,12 @@ class ScanService:
             scan_session.completed_at = datetime.utcnow()
             self.db.commit()
 
-            _set_progress(scan_id, status="completed", percentage=100)
-            logger.info(f"Scan {scan_id} completed: {total_files} files, {total_size} bytes")
+            _set_progress(scan_id, status="completed", percentage=100, **{f'hash_{k}': v for k, v in stats.items()})
+            logger.info(
+                f"Scan {scan_id} completed: {total_files} files, {total_size} bytes "
+                f"(hashed {stats['hashed']}, reused {stats['reused']}, "
+                f"skipped {stats['skipped_unique']} unique-size)"
+            )
 
             # Usage analysis runs only after the file records are stored
             try:

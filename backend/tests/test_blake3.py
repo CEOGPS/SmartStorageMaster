@@ -53,8 +53,9 @@ def test_exact_duplicates_are_grouped_by_blake3(db, tmp_path):
     (tmp_path / "c.txt").write_text("different")
     sid = scan(db, tmp_path)
     assert len(groups(db, sid)) == 1
+    # c.txt has a size no other file shares, so it cannot be a duplicate and is not read
     names = {f.name for f in db.query(File).filter(File.hash_blake3.isnot(None))}
-    assert names == {"a.txt", "b.txt", "c.txt"}
+    assert names == {"a.txt", "b.txt"}
 
 
 def test_same_hash_but_different_size_is_never_grouped(db, tmp_path):
